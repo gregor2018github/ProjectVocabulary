@@ -1,14 +1,14 @@
 """
 Description:
 
-This program is a vocabulary trainer for Dutch and German words. It loads the vocabulary from a DUTCH.docx file and saves the statistics in a vocabulary_data.json file.
+This program is a vocabulary trainer for Dutch and German words. It loads the vocabulary from a VOCABS.xlsx file and saves the statistics in a vocabulary_data.json file.
 The user interface is created with pyqt6. Key feature is a slider to evaluate how well the translation was known (right=good, left=bad). The statistics are visualized in a table.
 Vocabulary training is possible in both directions (Dutch->German and vice versa). 
 The program chooses the next word based on how often it was asked, how correct it was answered and how long ago it was asked.
 The program also never asks the same word twice in a session of 10 words.
-The program can start with a json file or with a docx file. If there is no json file, then the docx file is loaded and a json file is created.
-The vocabulary can constantly be enlarged by adding new words to the end of the docx file. Also translations can be changed. The order of rows must not be changed though.
-The main menu has a button to refresh the vocabulary list from the docx file while keeping the statistics from the json file.
+The program can start with a json file or with a xlsx file. If there is no json file, then the xlsx file is loaded and a json file is created.
+The vocabulary can constantly be enlarged by adding new words to the end of the xlsx file. Also translations can be changed. The order of rows must not be changed though.
+The main menu has a button to refresh the vocabulary list from the xlsx file while keeping the statistics from the json file.
 
 22.09.2023
 
@@ -16,7 +16,7 @@ An AI training modus was added to the program, where a given training word will 
 Furthermore, the program is upgraded with text-to-speech (TTS) capabilities to read out the example sentences.
 Both features are based on the OpenAI API, which requires an API key to be saved as the environment variable OPENAI_API_KEY.
 
-Gregor Krause, 04.02.2023
+Gregor Krause, 04.02.2024
 
 """
 
@@ -29,6 +29,8 @@ TODO
 - background image
 """
 
+# IMPORTS
+
 import datetime
 import json
 import os
@@ -37,38 +39,45 @@ import pandas as pd
 import random
 import sys
 import time
-from docx import Document
 from pygame import mixer
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLabel, QSlider, QTableView, QComboBox
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QCoreApplication
+import openpyxl
+
+# CONSTANTS
+
+XLSX_FILE = 'VOCAB.xlsx'  # The name of the Excel file containing the vocabulary
+JSON_FILE = 'vocabulary_data.json'  # The name of the JSON file to save the vocabulary data
+
+# CLASSES
 
 # class that creates a table model for the statistics table
 class TableModel(QAbstractTableModel):
-    def __init__(self, data):
+    def __init__(self, data: pd.DataFrame) -> None:
         super().__init__()
         self._data = data
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return len(self._data)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return len(self._data.columns)
 
-    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+    def data(self, index: QModelIndex, role: Qt.ItemDataRole) -> str | None:
         if role == Qt.ItemDataRole.DisplayRole:
             return str(self._data.iloc[index.row(), index.column()])
         return None
 
-    def headerData(self, section, orientation, role):
+    def headerData(self, section: int, orientation: Qt.Orientation, role: Qt.ItemDataRole) -> str | None:
         if role == Qt.ItemDataRole.DisplayRole:
             if orientation == Qt.Orientation.Horizontal:
                 return str(self._data.columns[section])
             if orientation == Qt.Orientation.Vertical:
                 return str(self._data.index[section])
         return None
-    
-    def sort(self, column, order):
+
+    def sort(self, column: int, order: Qt.SortOrder) -> None:
         self.layoutAboutToBeChanged.emit()
         if order == Qt.SortOrder.AscendingOrder:
             self._data = self._data.sort_values(by=self._data.columns[column], ascending=True)
@@ -76,7 +85,7 @@ class TableModel(QAbstractTableModel):
             self._data = self._data.sort_values(by=self._data.columns[column], ascending=False)
         self.layoutChanged.emit()
 
-    def flags(self, index):
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         return Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
 
 # class to handle (load, save, manipulate) the data of the vocabulary
@@ -95,37 +104,37 @@ class DataHandler:
     current_date = []       # df[10]: current date, gets updated every time the program is started
     session_vocabs = []     # temporary storage of what vocabs where asked this session
 
-    # open a docx file and load the vocabulary table into three lists (dutch, german, phonetics)
-    def load_and_check_docx(filename):
-        print("Loading vocabulary from docx file...")
-        # load tables from document
-        document = Document(filename)
+    def load_and_check_xlsx(filename):
+        """Load vocabulary from an Excel file. Check if the file exists and if it contains the correct columns."""
+        print("Loading vocabulary from Excel file...")
+        if not os.path.exists(filename):
+            raise FileNotFoundError(f"The file {filename} is not found.")
+        # Load the Excel file
+        workbook = openpyxl.load_workbook(filename)
+        sheet = workbook.active
 
-        # iterate over all tables in the document and merge them into one list
-        voc_table = []
-        for table in document.tables:
-            voc_table.extend(table.rows)
-        
-        temp_dutch_voc_list = []    # temporary list to store the dutch words
-        temp_german_voc_list = []   # temporary list to store the german words
-        temp_phonetics_list = []    # temporary list to store the phonetics
+        # Check if the sheet contains the correct columns
+        expected_columns = ["DUTCH", "GERMAN", "NOTE"]
+        actual_columns = [cell.value for cell in sheet[1]]
+        if actual_columns != expected_columns:
+            raise ValueError(f"The Excel file must contain the following columns: {expected_columns}, but found: {actual_columns}")
+        # Read the data from the sheet
+        temp_dutch_voc_list = []
+        temp_german_voc_list = []
+        temp_phonetics_list = []
 
-        # isolate dutch words as a list
-        for i in range(len(voc_table)):
-            if voc_table[i].cells[0].text != "": # only if column one is not empty
-                temp_dutch_voc_list.append(voc_table[i].cells[0].text)
-                temp_german_voc_list.append(voc_table[i].cells[1].text)
-                temp_phonetics_list.append(voc_table[i].cells[2].text)
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            temp_dutch_voc_list.append(row[0])
+            temp_german_voc_list.append(row[1])
+            temp_phonetics_list.append(row[2])
 
-        # when there is no file vacabulary_data.json, then save the lists as the DataHandler lists / df
-        if not os.path.exists('vocabulary_data.json'):
+        # when there is no json file, then save the lists as the DataHandler lists / df
+        if not os.path.exists(JSON_FILE):
             DataHandler.create_new_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list)
-        
-        # when there is a file vacabulary_data.json, then load the lists from the file
-        if os.path.exists('vocabulary_data.json'):   
-            DataHandler.adjust_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list)
 
-        print("Vocabulary loaded successfully!")
+        # when there is a json file, then load the lists from the file
+        if os.path.exists(JSON_FILE):
+            DataHandler.load_json()
 
     def create_new_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list):
             print("No json data found. Creating new json data...")
@@ -145,20 +154,13 @@ class DataHandler:
             # combine dutch, german and phonetics list into a nested list, the data frame
             DataHandler.data_frame = [DataHandler.dutch_voc_list, DataHandler.german_voc_list, DataHandler.phonetics_list, DataHandler.asked, DataHandler.correct, DataHandler.wrong, DataHandler.points, DataHandler.last_asked, DataHandler.current_date]
 
-    def adjust_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list):
-        """The rows must barely be changed (row 1 must always be reserved for the same vocabulary but we might slightly alter the dutch or german writing).
-        Pseudocode:
-        if same amount of rows in docx and json:
-        -> check for each row if german or dutch translation is altered
-        -> if yes change it in the json
-
-        elif more rows in docx than in json:
-        -> add additional rows of docx to json and give them default values for asked, correct, wrong, points, last_asked
-
-        elif less rows in docx than in json
-        -> throw error and end program without saving data
-        
-        Actual Code:"""
+    def adjust_json(temp_dutch_voc_list: list, temp_german_voc_list: list, temp_phonetics_list: list) -> None:
+        """
+        The rows must not be changed in order (row 1 must always be reserved for the same vocabulary but we might slightly alter the dutch or german writing). There are three cases to consider:
+        1.) german or dutch translation is altered but the amount of rows is the same: if yes change it in the json
+        2.) more rows in xlsx than in json: add additional rows of xlsx to json and give them default values for asked, correct, wrong, points, last_asked
+        3.) less rows in xlsx than in json: throw error and end program without saving data
+        """
         # if same amount of rows in docx and json:
         if len(temp_dutch_voc_list) == len(DataHandler.dutch_voc_list):
             for i in range(len(temp_dutch_voc_list)):
@@ -193,9 +195,9 @@ class DataHandler:
             raise Exception("Error: The docx file contains less rows than the json file. Please add the missing rows to the docx file or delete the json file to create a new one.")
 
 
-    # save dutch_voc_list, german_voc_list, phonetics_list to a json file
     def save_data_json():
-        with open('vocabulary_data.json', 'w') as file:
+        """Save the vocabulary data to a json file."""
+        with open(JSON_FILE, 'w') as file:
             json.dump([ DataHandler.dutch_voc_list, 
                         DataHandler.german_voc_list, 
                         DataHandler.phonetics_list,
@@ -208,11 +210,10 @@ class DataHandler:
                         DataHandler.last_asked,
                         DataHandler.current_date]
                        , file)
-            # alternative: json.dump(DataHandler.data_frame, file)
 
     # load dutch_voc_list, german_voc_list, phonetics_list from a json file
     def load_data_json():
-        with open('vocabulary_data.json', 'r') as file:
+        with open(JSON_FILE, 'r') as file:
             loaded_data_frame = json.load(file)
             DataHandler.dutch_voc_list = loaded_data_frame[0]
             DataHandler.german_voc_list = loaded_data_frame[1]
@@ -1034,7 +1035,7 @@ class UserInterface:
 
         # # actually refresh the data
         try:
-            DataHandler.load_and_check_docx('DUTCH.docx')
+            DataHandler.load_and_check_xlsx()
             DataHandler.save_data_json()
         except:
             print("\n\nError: \nNo vocabulary data found as docx. Please add a docx file with the name 'DUTCH.docx' to the same folder as this program.\nThe docx file should contain a table with three columns: Dutch, German and Phonetics. No headings or other columns are allowed.\n\n")
@@ -1183,7 +1184,6 @@ class OpenAiHandler:
         else:
             print("Sound already created, playing it...")
             gui_handler.play_sound("generated_audio.mp3")
-
 
 # rather complex functions that are used in the program, outsourced to a separate class for better overview
 class ProgramLogic:
@@ -1440,17 +1440,25 @@ class ProgramLogic:
 
         return table_data
 
+# MAIN
+
 def main():
     # try to load vocabulary from json file, if it doesn't exist, then load it from docx file
     try:
         DataHandler.data_frame = DataHandler.load_data_json()
     except FileNotFoundError:
-        print("\n\nNo vocabulary data found as json. Trying to load it from docx file.\n")
+        print("\n\nNo vocabulary data found as json. Trying to load it from xlsx file.\n")
         try:
-            DataHandler.load_and_check_docx('DUTCH.docx')
+            DataHandler.load_and_check_xlsx(XLSX_FILE)
         except:
-            print("\n\nError: \nNo vocabulary data found as json or docx. Please add a docx file with the name 'DUTCH.docx' to the same folder as this program.\nThe docx file should contain a table with three columns: Dutch, German and Phonetics. No headings or other columns are allowed.\nThe program will now exit.\n\n")
+            print("\n\nError: \nNo vocabulary data found as json or xlsx. Please add a xlsx file with the name 'DUTCH.xlsx' to the same folder as this program.\nThe xlsx file should contain a table with three columns: Dutch, German and Phonetics. No headings or other columns are allowed.\nThe program will now exit.\n\n")
             sys.exit()
+    # try to open the OPENAI_API_KEY from the environment variables, if it doesn't exist, then exit the program
+    try:
+        OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+    except KeyError:
+        print("\n\nError: \nOPENAI_API_KEY not found in environment variables. Please set it and try again.\n\n")
+        sys.exit()
 
     # add todays date to current_date
     date = datetime.date.today()
