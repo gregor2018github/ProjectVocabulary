@@ -17,16 +17,6 @@ Furthermore, the program is upgraded with text-to-speech (TTS) capabilities to r
 Both features are based on the OpenAI API, which requires an API key to be saved as the environment variable OPENAI_API_KEY.
 
 Gregor Krause, 04.02.2024
-
-"""
-
-"""
-TODO
-- check the calculation of the row width, sometimes the letters are cut off (especially in German)
-- clean up the main method
-- add AI modus for G->D
-- shift json file also to the files folder
-- background image
 """
 
 # IMPORTS
@@ -47,7 +37,7 @@ import openpyxl
 
 # CONSTANTS
 
-XLSX_FILE = 'VOCAB.xlsx'  # The name of the Excel file containing the vocabulary
+XLSX_FILE = 'VOCABS.xlsx'  # The name of the Excel file containing the vocabulary
 JSON_FILE = 'vocabulary_data.json'  # The name of the JSON file to save the vocabulary data
 
 # CLASSES
@@ -134,7 +124,7 @@ class DataHandler:
 
         # when there is a json file, then load the lists from the file
         if os.path.exists(JSON_FILE):
-            DataHandler.load_json()
+            DataHandler.load_data_json()
 
     def create_new_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list):
             print("No json data found. Creating new json data...")
@@ -1035,10 +1025,10 @@ class UserInterface:
 
         # # actually refresh the data
         try:
-            DataHandler.load_and_check_xlsx()
+            DataHandler.load_and_check_xlsx(XLSX_FILE)
             DataHandler.save_data_json()
-        except:
-            print("\n\nError: \nNo vocabulary data found as docx. Please add a docx file with the name 'DUTCH.docx' to the same folder as this program.\nThe docx file should contain a table with three columns: Dutch, German and Phonetics. No headings or other columns are allowed.\n\n")
+        except Exception as e:
+            print(f"\n\nError while loading vocabulary: \n{e}")
 
         # go back to main menu
         UserInterface.main_menu(self)
@@ -1203,7 +1193,7 @@ class ProgramLogic:
     # choose a vocab based on how often voc was asked, how correct it was answered, how long ago it was asked 
     def choose_vocab(show_console_text = True):
         # based on given statistics, choose a vocab to ask next
-        # important is: how often was it asked, how correct (with how many slider points) was it answered, how long ago was it asked... we make a score for these three and order the vocabs by that scores
+        # important is: how often was it asked, how correct (with how many slider points) was it answered, how long ago it was asked... we make a score for these three and order the vocabs by that scores
         # when several items have the same score in a sublist, shuffle them randomly (otherwise they always get orderd by index and it gets boring)
         # never ask the same item twice in a row (in fact an asked voc gets blocked for ten iterations)
 
