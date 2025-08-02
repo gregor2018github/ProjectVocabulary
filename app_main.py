@@ -21,7 +21,7 @@ import config
 
 # CLASSES
 
-class TableHandler(QAbstractTableModel):
+class Table(QAbstractTableModel):
     """A class to create a standard table model for the statistics table"""
     def __init__(self, data: pd.DataFrame) -> None:
         super().__init__()
@@ -57,7 +57,7 @@ class TableHandler(QAbstractTableModel):
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         return Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
 
-class DataHandler:
+class Data:
     """A class to handle (load, save, manipulate) the data of the vocabulary"""
     data_frame = []         # nested list with all data combined
     dutch_voc_list = []     # df[0]: dutch word
@@ -101,30 +101,30 @@ class DataHandler:
 
         # when there is no json file, then save the lists as the DataHandler lists / df
         if not os.path.exists(config.JSON_FILE):
-            DataHandler.create_new_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list)
+            Data.create_new_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list)
 
         # when there is a json file, then load the lists from the file and adjust them
         if os.path.exists(config.JSON_FILE):
-            DataHandler.load_data_json()
-            DataHandler.adjust_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list)
+            Data.load_data_json()
+            Data.adjust_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list)
 
     def create_new_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list):
             print("No json data found. Creating new json data...")
-            DataHandler.dutch_voc_list = temp_dutch_voc_list
-            DataHandler.german_voc_list = temp_german_voc_list
-            DataHandler.phonetics_list = temp_phonetics_list
-            DataHandler.asked = [0] * len(temp_dutch_voc_list)
-            DataHandler.correct = [0] * len(temp_dutch_voc_list)
-            DataHandler.wrong = [0] * len(temp_dutch_voc_list)
+            Data.dutch_voc_list = temp_dutch_voc_list
+            Data.german_voc_list = temp_german_voc_list
+            Data.phonetics_list = temp_phonetics_list
+            Data.asked = [0] * len(temp_dutch_voc_list)
+            Data.correct = [0] * len(temp_dutch_voc_list)
+            Data.wrong = [0] * len(temp_dutch_voc_list)
             for i in range(len(temp_dutch_voc_list)):
-                DataHandler.points.append([])
-                DataHandler.d_g_points.append([])
-                DataHandler.g_d_points.append([])
-            DataHandler.last_asked = ["never"] * len(temp_dutch_voc_list)
-            DataHandler.current_date = [datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")]
+                Data.points.append([])
+                Data.d_g_points.append([])
+                Data.g_d_points.append([])
+            Data.last_asked = ["never"] * len(temp_dutch_voc_list)
+            Data.current_date = [datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")]
 
             # combine dutch, german and phonetics list into a nested list, the data frame
-            DataHandler.data_frame = [DataHandler.dutch_voc_list, DataHandler.german_voc_list, DataHandler.phonetics_list, DataHandler.asked, DataHandler.correct, DataHandler.wrong, DataHandler.points, DataHandler.last_asked, DataHandler.current_date]
+            Data.data_frame = [Data.dutch_voc_list, Data.german_voc_list, Data.phonetics_list, Data.asked, Data.correct, Data.wrong, Data.points, Data.last_asked, Data.current_date]
 
     def adjust_json(temp_dutch_voc_list: list, temp_german_voc_list: list, temp_phonetics_list: list) -> None:
         """
@@ -134,98 +134,98 @@ class DataHandler:
         3.) less rows in xlsx than in json: throw error and end program without saving data
         """
         # if same amount of rows in docx and json:
-        if len(temp_dutch_voc_list) == len(DataHandler.dutch_voc_list):
+        if len(temp_dutch_voc_list) == len(Data.dutch_voc_list):
             for i in range(len(temp_dutch_voc_list)):
                 # check for each row if dutch translation is altered
-                if temp_dutch_voc_list[i] != DataHandler.dutch_voc_list[i]:
+                if temp_dutch_voc_list[i] != Data.dutch_voc_list[i]:
                     print("New dutch description'", temp_dutch_voc_list[i], "' It will be added to the vocabulary list.")
-                    DataHandler.dutch_voc_list[i] = temp_dutch_voc_list[i]
+                    Data.dutch_voc_list[i] = temp_dutch_voc_list[i]
                 # check for each row if german translation is altered
-                if temp_german_voc_list[i] != DataHandler.german_voc_list[i]:
+                if temp_german_voc_list[i] != Data.german_voc_list[i]:
                     print("New german translation found for '", temp_dutch_voc_list[i], "' It will be added to the vocabulary list.")
-                    DataHandler.german_voc_list[i] = temp_german_voc_list[i]
+                    Data.german_voc_list[i] = temp_german_voc_list[i]
                 # check for each row if phonetics is altered
-                if temp_phonetics_list[i] != DataHandler.phonetics_list[i]:
+                if temp_phonetics_list[i] != Data.phonetics_list[i]:
                     print("New phonetics found for '", temp_dutch_voc_list[i], "' It will be added to the vocabulary list.")
-                    DataHandler.phonetics_list[i] = temp_phonetics_list[i]
+                    Data.phonetics_list[i] = temp_phonetics_list[i]
         # elif more rows in docx than in json:
-        elif len(temp_dutch_voc_list) > len(DataHandler.dutch_voc_list):
-            for i in range(len(DataHandler.dutch_voc_list), len(temp_dutch_voc_list)):
+        elif len(temp_dutch_voc_list) > len(Data.dutch_voc_list):
+            for i in range(len(Data.dutch_voc_list), len(temp_dutch_voc_list)):
                 print("New word found: '", temp_dutch_voc_list[i], "' It will be added to the vocabulary list.")
-                DataHandler.dutch_voc_list.append(temp_dutch_voc_list[i])
-                DataHandler.german_voc_list.append(temp_german_voc_list[i])
-                DataHandler.phonetics_list.append(temp_phonetics_list[i])
-                DataHandler.asked.append(0)
-                DataHandler.correct.append(0)
-                DataHandler.wrong.append(0)
-                DataHandler.points.append([])
-                DataHandler.d_g_points.append([])
-                DataHandler.g_d_points.append([])
-                DataHandler.last_asked.append("never")
+                Data.dutch_voc_list.append(temp_dutch_voc_list[i])
+                Data.german_voc_list.append(temp_german_voc_list[i])
+                Data.phonetics_list.append(temp_phonetics_list[i])
+                Data.asked.append(0)
+                Data.correct.append(0)
+                Data.wrong.append(0)
+                Data.points.append([])
+                Data.d_g_points.append([])
+                Data.g_d_points.append([])
+                Data.last_asked.append("never")
         # elif less rows in docx than in json
-        elif len(temp_dutch_voc_list) < len(DataHandler.dutch_voc_list):
+        elif len(temp_dutch_voc_list) < len(Data.dutch_voc_list):
             raise Exception("Error: The docx file contains less rows than the json file. Please add the missing rows to the docx file or delete the json file to create a new one.")
 
 
     def save_data_json():
         """Save the vocabulary data to a json file."""
         with open(config.JSON_FILE, 'w') as file:
-            json.dump([ DataHandler.dutch_voc_list, 
-                        DataHandler.german_voc_list, 
-                        DataHandler.phonetics_list,
-                        DataHandler.asked,
-                        DataHandler.correct,
-                        DataHandler.wrong,
-                        DataHandler.points,
-                        DataHandler.d_g_points,
-                        DataHandler.g_d_points,
-                        DataHandler.last_asked,
-                        DataHandler.current_date]
+            json.dump([ Data.dutch_voc_list, 
+                        Data.german_voc_list, 
+                        Data.phonetics_list,
+                        Data.asked,
+                        Data.correct,
+                        Data.wrong,
+                        Data.points,
+                        Data.d_g_points,
+                        Data.g_d_points,
+                        Data.last_asked,
+                        Data.current_date]
                        , file)
 
     # load dutch_voc_list, german_voc_list, phonetics_list from a json file
     def load_data_json():
         with open(config.JSON_FILE, 'r') as file:
             loaded_data_frame = json.load(file)
-            DataHandler.dutch_voc_list = loaded_data_frame[0]
-            DataHandler.german_voc_list = loaded_data_frame[1]
-            DataHandler.phonetics_list = loaded_data_frame[2]
-            DataHandler.asked = loaded_data_frame[3]
-            DataHandler.correct = loaded_data_frame[4]
-            DataHandler.wrong = loaded_data_frame[5]
-            DataHandler.points = loaded_data_frame[6]
-            DataHandler.d_g_points = loaded_data_frame[7]
-            DataHandler.g_d_points = loaded_data_frame[8]
-            DataHandler.last_asked = loaded_data_frame[9]
-            DataHandler.current_date = loaded_data_frame[10]
+            Data.dutch_voc_list = loaded_data_frame[0]
+            Data.german_voc_list = loaded_data_frame[1]
+            Data.phonetics_list = loaded_data_frame[2]
+            Data.asked = loaded_data_frame[3]
+            Data.correct = loaded_data_frame[4]
+            Data.wrong = loaded_data_frame[5]
+            Data.points = loaded_data_frame[6]
+            Data.d_g_points = loaded_data_frame[7]
+            Data.g_d_points = loaded_data_frame[8]
+            Data.last_asked = loaded_data_frame[9]
+            Data.current_date = loaded_data_frame[10]
 
             # create empty lists for asked, correct, wrong, points, last_asked, if they don't exist yet
-            nr_of_vocs = len(DataHandler.dutch_voc_list)
-            if len(DataHandler.asked) == 0:
-                DataHandler.asked = [0] * nr_of_vocs
-            if len(DataHandler.correct) == 0:
-                DataHandler.correct = [0] * nr_of_vocs
-            if len(DataHandler.wrong) == 0:
-                DataHandler.wrong = [0] * nr_of_vocs
-            if len(DataHandler.points) == 0:
+            nr_of_vocs = len(Data.dutch_voc_list)
+            if len(Data.asked) == 0:
+                Data.asked = [0] * nr_of_vocs
+            if len(Data.correct) == 0:
+                Data.correct = [0] * nr_of_vocs
+            if len(Data.wrong) == 0:
+                Data.wrong = [0] * nr_of_vocs
+            if len(Data.points) == 0:
                 for i in range(nr_of_vocs):
-                    DataHandler.points.append([])
-            if len(DataHandler.d_g_points) == 0:
+                    Data.points.append([])
+            if len(Data.d_g_points) == 0:
                 for i in range(nr_of_vocs):
-                    DataHandler.d_g_points.append([])
-            if len(DataHandler.g_d_points) == 0:
+                    Data.d_g_points.append([])
+            if len(Data.g_d_points) == 0:
                 for i in range(nr_of_vocs):
-                    DataHandler.g_d_points.append([])
-            if len(DataHandler.last_asked) == 0:
+                    Data.g_d_points.append([])
+            if len(Data.last_asked) == 0:
                 for i in range(nr_of_vocs):
-                    DataHandler.last_asked.append("never")
+                    Data.last_asked.append("never")
 
             return loaded_data_frame
 
     # print complete vocabulary list to console
     def print_complete_voc_list():
-        for i in range(len(DataHandler.dutch_voc_list)):
-            print(DataHandler.dutch_voc_list[i], " :: ", DataHandler.german_voc_list[i])
+        for i in range(len(Data.dutch_voc_list)):
+            print(Data.dutch_voc_list[i], " :: ", Data.german_voc_list[i])
             print("")
 
     def create_empty_xlsx(filename):
@@ -235,7 +235,7 @@ class DataHandler:
         sheet.append(["DUTCH", "GERMAN", "NOTE"])
         workbook.save(filename)
 
-class UiHandler:
+class GUI:
     """A class to handle the user interface with pyqt"""
     instance = []
     def __init__(self):
@@ -243,13 +243,13 @@ class UiHandler:
         # initialize the pygame mixer for playing sound files
         mixer.init()
 
-        UiHandler.instance.append(self)
+        GUI.instance.append(self)
         self.app = QApplication([])
         self.window = QMainWindow()
         self.main_menu()
     
     def play_sound(self, file_name):
-        os.chdir(logic_handler.files_path)
+        os.chdir(config.FILES_PATH)
         # make a copy of the file so that it can be overwritten
         mixer.music.load(file_name)  # Load the sound file
         mixer.music.play()  # Play the sound file
@@ -258,7 +258,7 @@ class UiHandler:
             pass
         # load a dummy file so that the "generated_audio.mp3" can be overwritten and be used again
         mixer.music.load("audio_dummy.wav")
-        os.chdir(logic_handler.main_path)
+        os.chdir(config.MAIN_PATH)
 
     # ramp up the main menu
     def main_menu(self):
@@ -355,12 +355,12 @@ class UiHandler:
 
     # go back to main menu
     def end_training(self):
-        UiHandler.main_menu(self)
+        GUI.main_menu(self)
 
     # show dutch vocab and ask for german translation
     def start_dutch_german(self):
         # change the modus to DG
-        logic_handler.modus = "DG"
+        logic.modus = "DG"
 
         # boolean to check if a slider was already added
         slider_added = False
@@ -369,10 +369,10 @@ class UiHandler:
         def show_translation():
             nonlocal label_text
             nonlocal slider_added
-            if label_text == LogicHandler.short_lines(dutch_word)+"\n"+phonetics:
-                label_text = LogicHandler.short_lines(correct_translation)
+            if label_text == Logic.short_lines(dutch_word)+"\n"+phonetics:
+                label_text = Logic.short_lines(correct_translation)
             else:
-                label_text = LogicHandler.short_lines(dutch_word)+"\n"+phonetics
+                label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
             label.setText(label_text)
 
             if not slider_added:
@@ -403,23 +403,23 @@ class UiHandler:
         def next_vocab():
             print(vocab_nr)
             # add +1 to asked
-            DataHandler.asked[vocab_nr] += 1
+            Data.asked[vocab_nr] += 1
             # add date to last_asked
-            DataHandler.last_asked[vocab_nr] = DataHandler.current_date[-1]
+            Data.last_asked[vocab_nr] = Data.current_date[-1]
             # add current points to list of all points
-            DataHandler.points[vocab_nr].append(self.slider.value())
+            Data.points[vocab_nr].append(self.slider.value())
             # add current points to list of German->Dutch translations
-            DataHandler.d_g_points[vocab_nr].append(self.slider.value())
+            Data.d_g_points[vocab_nr].append(self.slider.value())
             # add +1 to correct or wrong
             if self.slider.value() > 60:
-                DataHandler.correct[vocab_nr] += 1
+                Data.correct[vocab_nr] += 1
             elif self.slider.value() < 40:
-                DataHandler.wrong[vocab_nr] += 1
+                Data.wrong[vocab_nr] += 1
 
             # save statistics
-            DataHandler.save_data_json()
+            Data.save_data_json()
             # ask for a new vocab
-            UiHandler.start_dutch_german(self)
+            GUI.start_dutch_german(self)
 
         # SET UP THE LAYOUT
 
@@ -432,10 +432,10 @@ class UiHandler:
                 widget.deleteLater()
 
         # Create a QLabel with vocabulary to ask
-        dutch_word, correct_translation, phonetics, vocab_nr = LogicHandler.ask_question()
+        dutch_word, correct_translation, phonetics, vocab_nr = Logic.ask_question()
 
         # ToDo: if phenetics is empty, don't show it
-        label_text = LogicHandler.short_lines(dutch_word)+"\n"+phonetics
+        label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
         label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
         label.setFont(QFont("Times New Roman", 24))
         label.setFixedSize(500,300) # width, height
@@ -469,7 +469,7 @@ class UiHandler:
     # show german vocab and ask for dutch translation
     def start_german_dutch(self):
         # change the modus to GD
-        logic_handler.modus = "GD"
+        logic.modus = "GD"
 
         # boolean to check if a slider was already added
         slider_added = False
@@ -478,10 +478,10 @@ class UiHandler:
         def show_translation():
             nonlocal label_text
             nonlocal slider_added
-            if label_text == LogicHandler.short_lines(dutch_word)+"\n"+phonetics:
-                label_text = LogicHandler.short_lines(german_word)
+            if label_text == Logic.short_lines(dutch_word)+"\n"+phonetics:
+                label_text = Logic.short_lines(german_word)
             else:
-                label_text = LogicHandler.short_lines(dutch_word)+"\n"+phonetics
+                label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
             label.setText(label_text)
 
             if not slider_added:
@@ -512,23 +512,23 @@ class UiHandler:
         def next_vocab():
             print(vocab_nr)
             # add +1 to asked
-            DataHandler.asked[vocab_nr] += 1
+            Data.asked[vocab_nr] += 1
             # add date to last_asked
-            DataHandler.last_asked[vocab_nr] = DataHandler.current_date[-1]
+            Data.last_asked[vocab_nr] = Data.current_date[-1]
             # add current points to list of all points
-            DataHandler.points[vocab_nr].append(self.slider.value())
+            Data.points[vocab_nr].append(self.slider.value())
             # add current points to list of German->Dutch translations
-            DataHandler.g_d_points[vocab_nr].append(self.slider.value())
+            Data.g_d_points[vocab_nr].append(self.slider.value())
             # add +1 to correct or wrong
             if self.slider.value() > 60:
-                DataHandler.correct[vocab_nr] += 1
+                Data.correct[vocab_nr] += 1
             elif self.slider.value() < 40:
-                DataHandler.wrong[vocab_nr] += 1
+                Data.wrong[vocab_nr] += 1
 
             # save statistics
-            DataHandler.save_data_json()
+            Data.save_data_json()
             # ask for a new vocab
-            UiHandler.start_german_dutch(self)
+            GUI.start_german_dutch(self)
 
         # SET UP THE LAYOUT
 
@@ -541,11 +541,11 @@ class UiHandler:
                 widget.deleteLater()
 
         # Create a QLabel with vocabulary to ask
-        dutch_word, correct_translation, phonetics, vocab_nr = LogicHandler.ask_question()
+        dutch_word, correct_translation, phonetics, vocab_nr = Logic.ask_question()
         german_word = correct_translation
 
         # ToDo: if phenetics is empty, don't show it
-        label_text = LogicHandler.short_lines(german_word)
+        label_text = Logic.short_lines(german_word)
         label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
         label.setFont(QFont("Times New Roman", 24))
         label.setFixedSize(500,300) # width, height
@@ -579,7 +579,7 @@ class UiHandler:
     # randomly ask for a dutch or german word
     def start_random(self):
         # change the modus to Random
-        logic_handler.modus = "RA"
+        logic.modus = "RA"
 
         # boolean to check if a slider was already added
         slider_added = False
@@ -590,11 +590,11 @@ class UiHandler:
             nonlocal label_text
             nonlocal slider_added
             nonlocal direction
-            if label_text == LogicHandler.short_lines(dutch_word)+"\n"+phonetics:
-                label_text = LogicHandler.short_lines(correct_translation)
+            if label_text == Logic.short_lines(dutch_word)+"\n"+phonetics:
+                label_text = Logic.short_lines(correct_translation)
                 direction = "Dutch -> German"
             else:
-                label_text = LogicHandler.short_lines(dutch_word)+"\n"+phonetics
+                label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
                 direction = "German -> Dutch"
             label.setText(label_text)
 
@@ -626,26 +626,26 @@ class UiHandler:
         def next_vocab():
             print(vocab_nr)
             # add +1 to asked
-            DataHandler.asked[vocab_nr] += 1
+            Data.asked[vocab_nr] += 1
             # add date to last_asked
-            DataHandler.last_asked[vocab_nr] = DataHandler.current_date[-1]
+            Data.last_asked[vocab_nr] = Data.current_date[-1]
             # add current points to list of all points
-            DataHandler.points[vocab_nr].append(self.slider.value())
+            Data.points[vocab_nr].append(self.slider.value())
             # add current points to list of German->Dutch translations or Dutch->German translations
             if direction == "Dutch -> German":
-                DataHandler.d_g_points[vocab_nr].append(self.slider.value())
+                Data.d_g_points[vocab_nr].append(self.slider.value())
             elif direction == "German -> Dutch":
-                DataHandler.g_d_points[vocab_nr].append(self.slider.value())
+                Data.g_d_points[vocab_nr].append(self.slider.value())
             # add +1 to correct or wrong
             if self.slider.value() > 60:
-                DataHandler.correct[vocab_nr] += 1
+                Data.correct[vocab_nr] += 1
             elif self.slider.value() < 40:
-                DataHandler.wrong[vocab_nr] += 1
+                Data.wrong[vocab_nr] += 1
 
             # save statistics
-            DataHandler.save_data_json()
+            Data.save_data_json()
             # ask for a new vocab
-            UiHandler.start_random(self)
+            GUI.start_random(self)
 
         # SET UP THE LAYOUT
 
@@ -658,13 +658,13 @@ class UiHandler:
                 widget.deleteLater()
 
         # Create a QLabel with vocabulary to ask
-        dutch_word, correct_translation, phonetics, vocab_nr = LogicHandler.ask_question()
+        dutch_word, correct_translation, phonetics, vocab_nr = Logic.ask_question()
 
         # ToDo: if phenetics is empty, don't show it
         if random.randint(0,1) == 0:
-            label_text = LogicHandler.short_lines(dutch_word)+"\n"+phonetics
+            label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
         else:
-            label_text = LogicHandler.short_lines(correct_translation)
+            label_text = Logic.short_lines(correct_translation)
         label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
         label.setFont(QFont("Times New Roman", 24))
         label.setFixedSize(500,300) # width, height
@@ -698,7 +698,7 @@ class UiHandler:
     # show dutch vocab and ai generated sentence and ask for german translation
     def start_ai_sentences(self):
         # change the modus to AI
-        logic_handler.modus = "AI"
+        logic.modus = "AI"
 
         # boolean to check if a slider was already added
         slider_added = False
@@ -710,17 +710,17 @@ class UiHandler:
             nonlocal slider_added
 
             # change the label for the vocabulary (first QLabel)
-            if label_text == LogicHandler.short_lines(dutch_word, pixel=800)+"\n"+phonetics:
-                label_text = LogicHandler.short_lines(correct_translation, pixel=800)
+            if label_text == Logic.short_lines(dutch_word, pixel=800)+"\n"+phonetics:
+                label_text = Logic.short_lines(correct_translation, pixel=800)
             else:
-                label_text = LogicHandler.short_lines(dutch_word, pixel=800)+"\n"+phonetics
+                label_text = Logic.short_lines(dutch_word, pixel=800)+"\n"+phonetics
             label.setText(label_text)
 
             # change the label for the ai sentence (second QLabel)
-            if label_text_ai == LogicHandler.short_lines(ai_sentence, pixel=800):
-                label_text_ai = LogicHandler.short_lines(ai_sentence_translation, pixel=800)
+            if label_text_ai == Logic.short_lines(ai_sentence, pixel=800):
+                label_text_ai = Logic.short_lines(ai_sentence_translation, pixel=800)
             else:
-                label_text_ai = LogicHandler.short_lines(ai_sentence, pixel=800)
+                label_text_ai = Logic.short_lines(ai_sentence, pixel=800)
             label_ai_sentence.setText(label_text_ai)
 
             if not slider_added:
@@ -751,23 +751,23 @@ class UiHandler:
         def next_vocab():
             print(vocab_nr)
             # add +1 to asked
-            DataHandler.asked[vocab_nr] += 1
+            Data.asked[vocab_nr] += 1
             # add date to last_asked
-            DataHandler.last_asked[vocab_nr] = DataHandler.current_date[-1]
+            Data.last_asked[vocab_nr] = Data.current_date[-1]
             # add current points to list of all points
-            DataHandler.points[vocab_nr].append(self.slider.value())
+            Data.points[vocab_nr].append(self.slider.value())
             # add current points to list of German->Dutch translations
-            DataHandler.d_g_points[vocab_nr].append(self.slider.value())
+            Data.d_g_points[vocab_nr].append(self.slider.value())
             # add +1 to correct or wrong
             if self.slider.value() > 60:
-                DataHandler.correct[vocab_nr] += 1
+                Data.correct[vocab_nr] += 1
             elif self.slider.value() < 40:
-                DataHandler.wrong[vocab_nr] += 1
+                Data.wrong[vocab_nr] += 1
 
             # save statistics
-            DataHandler.save_data_json()
+            Data.save_data_json()
             # ask for a new vocab
-            UiHandler.start_ai_sentences(self)
+            GUI.start_ai_sentences(self)
 
         # SET UP THE LAYOUT
 
@@ -780,9 +780,9 @@ class UiHandler:
                 widget.deleteLater()
 
         # Create a QLabel with vocabulary to ask
-        dutch_word, correct_translation, phonetics, vocab_nr = LogicHandler.ask_question()
+        dutch_word, correct_translation, phonetics, vocab_nr = Logic.ask_question()
 
-        label_text = LogicHandler.short_lines(dutch_word)+"\n"+phonetics
+        label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
         label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
         label.setFont(QFont("Times New Roman", 24))
         label.setFixedSize(800,200) # width, height
@@ -790,13 +790,13 @@ class UiHandler:
         label.setStyleSheet("border: 1px solid black;")
 
         # generate data with AI
-        ai_sentence = OpenAiHandler.generate_AI_sentence(dutch_word, openai_handler.OpenAiClient)
+        ai_sentence = AiApi.generate_AI_sentence(dutch_word, aiapi.OpenAiClient)
         ai_sentence_translation = "Dies ist ein Test, um zu sehen, wie das Programm die visuelle Darstellung eines längeren Satzes handhabt. Es sollte in der Lage sein, den ganzen Satz anzuzeigen und ihn nicht abzuschneiden. Der Satz sollte in der Mitte des Fensters angezeigt werden." #TODO
-        ai_sentence_translation = OpenAiHandler.generate_AI_translation(ai_sentence, openai_handler.OpenAiClient)
-        logic_handler.sound_created = False
+        ai_sentence_translation = AiApi.generate_AI_translation(ai_sentence, aiapi.OpenAiClient)
+        logic.sound_created = False
         
         # Create second Qlabel, which will show the AI sentence
-        label_text_ai = LogicHandler.short_lines(ai_sentence, pixel=800)
+        label_text_ai = Logic.short_lines(ai_sentence, pixel=800)
         label_ai_sentence = QLabel(label_text_ai, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
         label_ai_sentence.setFont(QFont("Times New Roman", 20))
         label_ai_sentence.setFixedSize(800,300) # width, height
@@ -832,7 +832,7 @@ class UiHandler:
         button_translate.clicked.connect(show_translation)
         button_end_training.clicked.connect(self.end_training)
         button_next_vok.clicked.connect(next_vocab)
-        button_play_sound.clicked.connect(lambda: OpenAiHandler.text_to_speech(ai_sentence, openai_handler.OpenAiClient, logic_handler.voice_model))
+        button_play_sound.clicked.connect(lambda: AiApi.text_to_speech(ai_sentence, aiapi.OpenAiClient, logic.voice_model))
 
         # refresh the window
         self.window.update()
@@ -840,12 +840,12 @@ class UiHandler:
     # settings for advanced mode, show 3 dropdowns and one start button
     def start_advanced_mode(self):
         # change the modus to settings
-        logic_handler.modus = "SE"
+        logic.modus = "SE"
 
         # set all dropdowns to the first option in the logic_handler
-        logic_handler.voice_model = "alloy"
-        logic_handler.language_direction_ai = "DG"
-        logic_handler.sentence_style_ai = "normal"
+        logic.voice_model = "alloy"
+        logic.language_direction_ai = "DG"
+        logic.sentence_style_ai = "normal"
 
         # SET UP THE LAYOUT
 
@@ -904,53 +904,53 @@ class UiHandler:
 
     # dropdown change in the menu for advanced mode (voice model)
     def on_voice_model_change(self, index):
-        logic_handler.voice_model = self.voice_model_dropdown.itemText(index)
+        logic.voice_model = self.voice_model_dropdown.itemText(index)
         #change to file folder
-        os.chdir(logic_handler.files_path)
+        os.chdir(config.FILES_PATH)
         if index == 0:
-            logic_handler.voice_model = "alloy"
-            gui_handler.play_sound("example_alloy.mp3")
+            logic.voice_model = "alloy"
+            gui.play_sound("example_alloy.mp3")
         elif index == 1:
-            logic_handler.voice_model = "echo"
-            gui_handler.play_sound("example_echo.mp3")
+            logic.voice_model = "echo"
+            gui.play_sound("example_echo.mp3")
         elif index == 2:
-            logic_handler.voice_model = "fable"
-            gui_handler.play_sound("example_fable.mp3")
+            logic.voice_model = "fable"
+            gui.play_sound("example_fable.mp3")
         elif index == 3:
-            logic_handler.voice_model = "nova"
-            gui_handler.play_sound("example_nova.mp3")
+            logic.voice_model = "nova"
+            gui.play_sound("example_nova.mp3")
         elif index == 4:
-            logic_handler.voice_model = "onyx"
-            gui_handler.play_sound("example_onyx.mp3")
+            logic.voice_model = "onyx"
+            gui.play_sound("example_onyx.mp3")
         elif index == 5:
-            logic_handler.voice_model = "shimmer"
-            gui_handler.play_sound("example_shimmer.mp3")
+            logic.voice_model = "shimmer"
+            gui.play_sound("example_shimmer.mp3")
         # back to main folder
-        os.chdir(logic_handler.main_path)
+        os.chdir(config.MAIN_PATH)
 
     # dropdown change in the menu for advanced mode (language direction)
     def on_language_change(self, index):
         if index == 0:
-            logic_handler.language_direction_ai = "DG"
+            logic.language_direction_ai = "DG"
         elif index == 1:
-            logic_handler.language_direction_ai = "GD"
+            logic.language_direction_ai = "GD"
 
     # dropdown change in the menu for advanced mode (sentence style)
     def on_sentence_style_change(self, index):
         if index == 0:
-            logic_handler.sentence_style_ai = "creative"
+            logic.sentence_style_ai = "creative"
         elif index == 1:
-            logic_handler.sentence_style_ai = "complex scientific"
+            logic.sentence_style_ai = "complex scientific"
         elif index == 2:
-            logic_handler.sentence_style_ai = "scary and dark"
+            logic.sentence_style_ai = "scary and dark"
         elif index == 3:
-            logic_handler.sentence_style_ai = "offensive"
+            logic.sentence_style_ai = "offensive"
 
     # show statistics in a table after pressing the button in the main menu	
     def explore_statistics(self):
 
         def back_to_main_menu():
-            UiHandler.main_menu(self)
+            GUI.main_menu(self)
         
         # Remove existing widgets from the layout
         layout = self.window.centralWidget().layout()
@@ -961,11 +961,11 @@ class UiHandler:
                 widget.deleteLater()
 
         # transform all data into a table form
-        table_data = LogicHandler.create_statistics_data()
+        table_data = Logic.create_statistics_data()
 
         # Create a pyqt table with that data
         table = QTableView()
-        model = TableHandler(table_data)
+        model = Table(table_data)
         table.setModel(model)
 
         # Enable sorting
@@ -1014,13 +1014,13 @@ class UiHandler:
 
         # # actually refresh the data
         try:
-            DataHandler.load_and_check_xlsx(config.XLSX_FILE)
-            DataHandler.save_data_json()
+            Data.load_and_check_xlsx(config.XLSX_FILE)
+            Data.save_data_json()
         except Exception as e:
             print(f"\n\nError while loading vocabulary: \n{e}")
 
         # go back to main menu
-        UiHandler.main_menu(self)
+        GUI.main_menu(self)
 
     # show a message that there are no more vocs to train
     def no_more_vocs(self):
@@ -1053,7 +1053,7 @@ class UiHandler:
     def run(self):
         sys.exit(self.app.exec())
 
-class OpenAiHandler:
+class AiApi:
     """A class to handle the connection to the OpenAI API"""
     def __init__(self):
         self.OpenAiClient = OpenAI(
@@ -1063,15 +1063,15 @@ class OpenAiHandler:
     # load the preprompt from text files in the files-directory
     def get_preprompt(prompt_modus): 
         # load the preprompt from the external file
-        os.chdir(logic_handler.files_path)
+        os.chdir(config.FILES_PATH)
         if prompt_modus == "sentence":
             # with open("pre_prompt_sentence.txt", "r") as f:
             #     preprompt = f.read()
-            preprompt = f"You are part of a vocabulary app. Your Job is simply to create {logic_handler.sentence_style_ai} Dutch example sentence with a given vocabulary or phrase that is written to you by the user. Do not explain you decision, simply give the one example sentence. You will not refuse the creation of the sentence!"
+            preprompt = f"You are part of a vocabulary app. Your Job is simply to create {logic.sentence_style_ai} Dutch example sentence with a given vocabulary or phrase that is written to you by the user. Do not explain you decision, simply give the one example sentence. You will not refuse the creation of the sentence!"
         elif prompt_modus == "translation":
             with open("pre_prompt_translation.txt", "r") as f:
                 preprompt = f.read()
-        os.chdir(logic_handler.main_path)
+        os.chdir(config.MAIN_PATH)
         return preprompt
 
     # take dutch phrase and generate example sentence in dutch
@@ -1081,7 +1081,7 @@ class OpenAiHandler:
         chat_history = [
             {
                 "role": "system",
-                "content": OpenAiHandler.get_preprompt("sentence")
+                "content": AiApi.get_preprompt("sentence")
             },
             {
                 "role": "assistant",
@@ -1115,7 +1115,7 @@ class OpenAiHandler:
         chat_history = [
             {
                 "role": "system",
-                "content": OpenAiHandler.get_preprompt("translation")
+                "content": AiApi.get_preprompt("translation")
             },
             {
                 "role": "assistant",
@@ -1147,23 +1147,23 @@ class OpenAiHandler:
     def text_to_speech(text, client, voice_agent):
 
         # check if sound was already created, otherwise create it
-        if not logic_handler.sound_created:
+        if not logic.sound_created:
             print("Creating sound...")
             # go to file subdirectory
-            speech_file_path = logic_handler.files_path + "/generated_audio.mp3"
+            speech_file_path = config.FILES_PATH + "/generated_audio.mp3"
             response = client.audio.speech.create(
                 model="tts-1-hd", #tts-1 ; tts-1-hd
                 voice=voice_agent,
                 input=text
             )
             response.stream_to_file(speech_file_path)
-            logic_handler.sound_created = True
-            gui_handler.play_sound("generated_audio.mp3")
+            logic.sound_created = True
+            gui.play_sound("generated_audio.mp3")
         else:
             print("Sound already created, playing it...")
-            gui_handler.play_sound("generated_audio.mp3")
+            gui.play_sound("generated_audio.mp3")
 
-class LogicHandler:
+class Logic:
     """A class to handle the main logic of the program"""
     def __init__(self) -> None:
         self.modus = None # modus keeps track of the training type that the user is currently in (DG, GD, RA, AI), mode will be used by other functions to determine the behavior of the program
@@ -1171,9 +1171,6 @@ class LogicHandler:
         self.voice_model = "alloy"
         self.language_direction_ai = "DG"
         self.sentence_style_ai = "normal"
-        # create two paths, the main path and the subdirectory path for files
-        self.main_path = os.getcwd()
-        self.files_path = os.path.join(self.main_path, "files")
 
     @staticmethod
     def search_vocabulary_data()-> None:
@@ -1182,11 +1179,11 @@ class LogicHandler:
         If neither exists, create an example xlsx file, explain to the user, open it for the user and exit the program.
         """
         try:
-            DataHandler.data_frame = DataHandler.load_data_json()
+            Data.data_frame = Data.load_data_json()
         except FileNotFoundError:
             print("\n\nNo vocabulary data found as json. Trying to load it from xlsx file.\n")
             try:
-                DataHandler.load_and_check_xlsx(config.XLSX_FILE)
+                Data.load_and_check_xlsx(config.XLSX_FILE)
             except Exception:
                 print("\n\nError: \nNo vocabulary data found as json or xlsx. An example file with the name 'VOCABS.xlsx' will be created in the '/files' directory, fill in your Vocabulary there.\nThe program will exit after creating the new file.\n\n")
                 q_app = QApplication(sys.argv)
@@ -1212,7 +1209,7 @@ class LogicHandler:
                     }
                 """)
                 msg.exec()
-                DataHandler.create_empty_xlsx(config.XLSX_FILE)
+                Data.create_empty_xlsx(config.XLSX_FILE)
                 os.startfile(os.path.abspath(config.XLSX_FILE))
                 sys.exit()
     
@@ -1251,7 +1248,6 @@ class LogicHandler:
             msg.exec()
             sys.exit()
 
-
     def choose_vocab(show_console_text = True):
         """
         Choose the vocabulary to be asked next.
@@ -1287,12 +1283,12 @@ class LogicHandler:
         # sort vocabs by when they were last asked
         def create_sublist_last_asked():
             list_last_asked = [] # list that sorts the vocabs by when they were last asked
-            for i in range(len(DataHandler.last_asked)):
+            for i in range(len(Data.last_asked)):
                 # if the word was never asked, then add the date 01/01/2000 to the list
-                if DataHandler.last_asked[i] == "never":
+                if Data.last_asked[i] == "never":
                     list_last_asked.append(["01/01/2000", i])
                 else:
-                    list_last_asked.append([DataHandler.last_asked[i], i])
+                    list_last_asked.append([Data.last_asked[i], i])
             list_last_asked.sort(reverse=False)
 
             # shuffle the list make it a bit more random
@@ -1303,8 +1299,8 @@ class LogicHandler:
         # sort vocabs by how often they were asked
         def create_sublist_asked_often():
             list_asked_often = [] # list that sorts the vocabs by how often it was asked
-            for i in range(len(DataHandler.asked)):
-                list_asked_often.append([DataHandler.asked[i], i])
+            for i in range(len(Data.asked)):
+                list_asked_often.append([Data.asked[i], i])
             list_asked_often.sort(reverse=False)
 
             # shuffle the list make it a bit more random
@@ -1315,11 +1311,11 @@ class LogicHandler:
         # sort vocabs by how many points they got in the last 10 times they were asked
         def create_sublist_average_points():
             list_average_points = [] # list that sorts the vocabs by how many points they got in the last 10 times they were asked
-            for i in range(len(DataHandler.points)):
-                if len(DataHandler.points[i]) > 10:
-                    list_average_points.append([sum(DataHandler.points[i][-10:])/10, i])
-                elif len(DataHandler.points[i]) > 0:
-                    list_average_points.append([sum(DataHandler.points[i])/len(DataHandler.points[i]), i])
+            for i in range(len(Data.points)):
+                if len(Data.points[i]) > 10:
+                    list_average_points.append([sum(Data.points[i][-10:])/10, i])
+                elif len(Data.points[i]) > 0:
+                    list_average_points.append([sum(Data.points[i])/len(Data.points[i]), i])
                 else:
                     list_average_points.append([0, i])
             list_average_points.sort(reverse=False)
@@ -1339,7 +1335,7 @@ class LogicHandler:
             weight_asked_often = 1
             weight_average_points = 2
 
-            for i in range(len(DataHandler.dutch_voc_list)):
+            for i in range(len(Data.dutch_voc_list)):
                 score = 0
                 for j in range(len(list_last_asked)):
                     if list_last_asked[j][1] == i:
@@ -1369,20 +1365,20 @@ class LogicHandler:
         # if no vocs were asked so far... we could take the first vocab from the list like chosen_vocab = list_total_score[0][1]
         # instead we go through the list and choose the first vocab that was not asked for at least 10 questions in this session
         for i in range(len(list_total_score)):
-            if show_console_text: print("\nTen last session vocabs (blocked for taken as next vocab): ", DataHandler.session_vocabs[-10:])
-            if list_total_score[i][1] not in DataHandler.session_vocabs[-10:]:
+            if show_console_text: print("\nTen last session vocabs (blocked for taken as next vocab): ", Data.session_vocabs[-10:])
+            if list_total_score[i][1] not in Data.session_vocabs[-10:]:
                 chosen_vocab = list_total_score[i][1]
                 if show_console_text: print("\nlist total score: \n",list_total_score)
-                if show_console_text: print("\nNext vocab to ask: ", DataHandler.dutch_voc_list[chosen_vocab], " with score ", list_total_score[i][0])
+                if show_console_text: print("\nNext vocab to ask: ", Data.dutch_voc_list[chosen_vocab], " with score ", list_total_score[i][0])
                 break
 
         # save the selection in the session_vocabs
         try:
-            DataHandler.session_vocabs.append(chosen_vocab)
+            Data.session_vocabs.append(chosen_vocab)
             # return the chosen vocab nr
             return chosen_vocab
         except:
-            UiHandler.no_more_vocs(UiHandler.instance[0])
+            GUI.no_more_vocs(GUI.instance[0])
             #freeze application for 10 seconds
             time.sleep(10)
             # stop the program
@@ -1392,16 +1388,16 @@ class LogicHandler:
     # get the right data for the question
     def ask_question():
         global vocab_nr
-        vocab_nr = LogicHandler.choose_vocab()
+        vocab_nr = Logic.choose_vocab()
         # alternatively random vocab selection:
         #vocab_nr = random.randint(0, len(DataHandler.data_frame[0])-1)
         print(vocab_nr)
-        print(DataHandler.data_frame[0])
+        print(Data.data_frame[0])
 
-        print(DataHandler.data_frame[0][vocab_nr], " - ", DataHandler.data_frame[1][vocab_nr])
-        dutch_word = DataHandler.data_frame[0][vocab_nr]
-        correct_translation = DataHandler.data_frame[1][vocab_nr]
-        phonetics = DataHandler.data_frame[2][vocab_nr]
+        print(Data.data_frame[0][vocab_nr], " - ", Data.data_frame[1][vocab_nr])
+        dutch_word = Data.data_frame[0][vocab_nr]
+        correct_translation = Data.data_frame[1][vocab_nr]
+        phonetics = Data.data_frame[2][vocab_nr]
 
         return dutch_word, correct_translation, phonetics, vocab_nr
     
@@ -1447,50 +1443,50 @@ class LogicHandler:
 
         # create a list that tells how many points the vocs have on average
         average_points = []
-        for i in range(len(DataHandler.points)):
-            if len(DataHandler.points[i]) > 0:
-                average_points.append(round(sum(DataHandler.points[i])/len(DataHandler.points[i]), 2))
+        for i in range(len(Data.points)):
+            if len(Data.points[i]) > 0:
+                average_points.append(round(sum(Data.points[i])/len(Data.points[i]), 2))
             else:
                 average_points.append(0)
         # create a list that tell how many points the vocs have on average in the last 10 times they were asked
         average_points_last_10 = []
-        for i in range(len(DataHandler.points)):
-            if len(DataHandler.points[i]) > 10:
-                average_points_last_10.append(round(sum(DataHandler.points[i][-10:])/10, 2))
-            elif len(DataHandler.points[i]) > 0:
-                average_points_last_10.append(round(sum(DataHandler.points[i])/len(DataHandler.points[i]), 2))
+        for i in range(len(Data.points)):
+            if len(Data.points[i]) > 10:
+                average_points_last_10.append(round(sum(Data.points[i][-10:])/10, 2))
+            elif len(Data.points[i]) > 0:
+                average_points_last_10.append(round(sum(Data.points[i])/len(Data.points[i]), 2))
             else:
                 average_points_last_10.append(0)
         # calculate the average points for dutch->german and german->dutch translations
         average_points_d_g = []
         average_points_g_d = []
-        for i in range(len(DataHandler.d_g_points)):
-            if len(DataHandler.d_g_points[i]) > 0:
-                average_points_d_g.append(round(sum(DataHandler.d_g_points[i])/len(DataHandler.d_g_points[i]), 2))
+        for i in range(len(Data.d_g_points)):
+            if len(Data.d_g_points[i]) > 0:
+                average_points_d_g.append(round(sum(Data.d_g_points[i])/len(Data.d_g_points[i]), 2))
             else:
                 average_points_d_g.append(0)
-        for i in range(len(DataHandler.g_d_points)):
-            if len(DataHandler.g_d_points[i]) > 0:
-                average_points_g_d.append(round(sum(DataHandler.g_d_points[i])/len(DataHandler.g_d_points[i]), 2))
+        for i in range(len(Data.g_d_points)):
+            if len(Data.g_d_points[i]) > 0:
+                average_points_g_d.append(round(sum(Data.g_d_points[i])/len(Data.g_d_points[i]), 2))
             else:
                 average_points_g_d.append(0)
 
-        for i in range(len(DataHandler.dutch_voc_list)):
+        for i in range(len(Data.dutch_voc_list)):
             data_list.append([
-                DataHandler.dutch_voc_list[i], 
-                DataHandler.german_voc_list[i], 
-                DataHandler.phonetics_list[i], 
-                DataHandler.asked[i], 
-                DataHandler.correct[i], 
-                DataHandler.wrong[i], 
-                DataHandler.points[i],
+                Data.dutch_voc_list[i], 
+                Data.german_voc_list[i], 
+                Data.phonetics_list[i], 
+                Data.asked[i], 
+                Data.correct[i], 
+                Data.wrong[i], 
+                Data.points[i],
                 average_points[i],
                 average_points_last_10[i],
-                DataHandler.d_g_points[i],
+                Data.d_g_points[i],
                 average_points_d_g[i],
-                DataHandler.g_d_points[i], 
+                Data.g_d_points[i], 
                 average_points_g_d[i],
-                DataHandler.last_asked[i]
+                Data.last_asked[i]
             ])
 
         table_data = pd.DataFrame(data_list, columns=['Dutch', 'German', 'Phonetics', 'Asked', 'Correct', 'Wrong', 'Points', 'Average Points', 'Average Points Last 10', 'Points D->G','Average Points D->G', 'Points G->D', 'Average Points G->D', 'Last Asked'])
@@ -1501,26 +1497,26 @@ class LogicHandler:
 
 def main():
     # check if vocabulary data is available, if not, create an example file
-    LogicHandler.search_vocabulary_data()
+    Logic.search_vocabulary_data()
     # check if OpenAI API key is available, if not exit
-    LogicHandler.search_openai_api_key()
+    Logic.search_openai_api_key()
 
     # add todays date to current_date
     date = datetime.date.today()
-    DataHandler.current_date.append(date.strftime("%d/%m/%Y"))
+    Data.current_date.append(date.strftime("%d/%m/%Y"))
 
     # initialize the open ai client to generate AI sentences
-    global openai_handler
-    openai_handler = OpenAiHandler()
+    global aiapi
+    aiapi = AiApi()
 
-    # initialize the ProgramLogic class
-    global logic_handler
-    logic_handler = LogicHandler()
+    # initialize the Logic class
+    global logic
+    logic = Logic()
 
     # initialize the user interface
-    global gui_handler
-    gui_handler = UiHandler()
-    gui_handler.run()
+    global gui
+    gui = GUI()
+    gui.run()
 
 if __name__ == "__main__":
     main()
