@@ -1,23 +1,3 @@
-"""
-Description:
-
-This program is a vocabulary trainer for Dutch and German words. It loads the vocabulary from a VOCABS.xlsx file and saves the statistics in a vocabulary_data.json file.
-The user interface is created with pyqt6. Key feature is a slider to evaluate how well the translation was known (right=good, left=bad). The statistics are visualized in a table.
-Vocabulary training is possible in both directions (Dutch->German and vice versa). 
-The program chooses the next word based on how often it was asked, how correct it was answered and how long ago it was asked.
-The program also never asks the same word twice in a session of 10 words.
-The program can start with a json file or with a xlsx file. If there is no json file, then the xlsx file is loaded and a json file is created.
-The vocabulary can constantly be enlarged by adding new words to the end of the xlsx file. Also translations can be changed. The order of rows must not be changed though.
-The main menu has a button to refresh the vocabulary list from the xlsx file while keeping the statistics from the json file.
-
-22.09.2023
-
-An AI training modus was added to the program, where a given training word will result in randomly generated sentences. 
-Furthermore, the program is upgraded with text-to-speech (TTS) capabilities to read out the example sentences.
-Both features are based on the OpenAI API, which requires an API key to be saved as the environment variable OPENAI_API_KEY.
-
-04.02.2024
-"""
 
 # IMPORTS
 
@@ -35,16 +15,14 @@ from PyQt6.QtGui import QFont
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QCoreApplication
 import openpyxl
 
+# MODULE IMPORTS
 
-# CONSTANTS
-
-XLSX_FILE = 'files/VOCABS.xlsx'  # The name of the Excel file containing the vocabulary
-JSON_FILE = 'files/vocabulary_data.json'  # path of JSON file to save the vocabulary data
+import config
 
 # CLASSES
 
-# class that creates a table model for the statistics table
-class TableModel(QAbstractTableModel):
+class TableHandler(QAbstractTableModel):
+    """A class to create a standard table model for the statistics table"""
     def __init__(self, data: pd.DataFrame) -> None:
         super().__init__()
         self._data = data
@@ -79,8 +57,8 @@ class TableModel(QAbstractTableModel):
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         return Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
 
-# class to handle (load, save, manipulate) the data of the vocabulary
 class DataHandler:
+    """A class to handle (load, save, manipulate) the data of the vocabulary"""
     data_frame = []         # nested list with all data combined
     dutch_voc_list = []     # df[0]: dutch word
     german_voc_list = []    # df[1]: german translation of the dutch word
@@ -122,11 +100,11 @@ class DataHandler:
             temp_phonetics_list.append(phonetics_val)
 
         # when there is no json file, then save the lists as the DataHandler lists / df
-        if not os.path.exists(JSON_FILE):
+        if not os.path.exists(config.JSON_FILE):
             DataHandler.create_new_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list)
 
         # when there is a json file, then load the lists from the file and adjust them
-        if os.path.exists(JSON_FILE):
+        if os.path.exists(config.JSON_FILE):
             DataHandler.load_data_json()
             DataHandler.adjust_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list)
 
@@ -191,7 +169,7 @@ class DataHandler:
 
     def save_data_json():
         """Save the vocabulary data to a json file."""
-        with open(JSON_FILE, 'w') as file:
+        with open(config.JSON_FILE, 'w') as file:
             json.dump([ DataHandler.dutch_voc_list, 
                         DataHandler.german_voc_list, 
                         DataHandler.phonetics_list,
@@ -207,7 +185,7 @@ class DataHandler:
 
     # load dutch_voc_list, german_voc_list, phonetics_list from a json file
     def load_data_json():
-        with open(JSON_FILE, 'r') as file:
+        with open(config.JSON_FILE, 'r') as file:
             loaded_data_frame = json.load(file)
             DataHandler.dutch_voc_list = loaded_data_frame[0]
             DataHandler.german_voc_list = loaded_data_frame[1]
@@ -257,15 +235,15 @@ class DataHandler:
         sheet.append(["DUTCH", "GERMAN", "NOTE"])
         workbook.save(filename)
 
-# class to handle the user interface with pyqt
-class UserInterface:
+class UiHandler:
+    """A class to handle the user interface with pyqt"""
     instance = []
     def __init__(self):
 
         # initialize the pygame mixer for playing sound files
         mixer.init()
 
-        UserInterface.instance.append(self)
+        UiHandler.instance.append(self)
         self.app = QApplication([])
         self.window = QMainWindow()
         self.main_menu()
@@ -377,7 +355,7 @@ class UserInterface:
 
     # go back to main menu
     def end_training(self):
-        UserInterface.main_menu(self)
+        UiHandler.main_menu(self)
 
     # show dutch vocab and ask for german translation
     def start_dutch_german(self):
@@ -391,10 +369,10 @@ class UserInterface:
         def show_translation():
             nonlocal label_text
             nonlocal slider_added
-            if label_text == ProgramLogic.short_lines(dutch_word)+"\n"+phonetics:
-                label_text = ProgramLogic.short_lines(correct_translation)
+            if label_text == LogicHandler.short_lines(dutch_word)+"\n"+phonetics:
+                label_text = LogicHandler.short_lines(correct_translation)
             else:
-                label_text = ProgramLogic.short_lines(dutch_word)+"\n"+phonetics
+                label_text = LogicHandler.short_lines(dutch_word)+"\n"+phonetics
             label.setText(label_text)
 
             if not slider_added:
@@ -441,7 +419,7 @@ class UserInterface:
             # save statistics
             DataHandler.save_data_json()
             # ask for a new vocab
-            UserInterface.start_dutch_german(self)
+            UiHandler.start_dutch_german(self)
 
         # SET UP THE LAYOUT
 
@@ -454,10 +432,10 @@ class UserInterface:
                 widget.deleteLater()
 
         # Create a QLabel with vocabulary to ask
-        dutch_word, correct_translation, phonetics, vocab_nr = ProgramLogic.ask_question()
+        dutch_word, correct_translation, phonetics, vocab_nr = LogicHandler.ask_question()
 
         # ToDo: if phenetics is empty, don't show it
-        label_text = ProgramLogic.short_lines(dutch_word)+"\n"+phonetics
+        label_text = LogicHandler.short_lines(dutch_word)+"\n"+phonetics
         label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
         label.setFont(QFont("Times New Roman", 24))
         label.setFixedSize(500,300) # width, height
@@ -500,10 +478,10 @@ class UserInterface:
         def show_translation():
             nonlocal label_text
             nonlocal slider_added
-            if label_text == ProgramLogic.short_lines(dutch_word)+"\n"+phonetics:
-                label_text = ProgramLogic.short_lines(german_word)
+            if label_text == LogicHandler.short_lines(dutch_word)+"\n"+phonetics:
+                label_text = LogicHandler.short_lines(german_word)
             else:
-                label_text = ProgramLogic.short_lines(dutch_word)+"\n"+phonetics
+                label_text = LogicHandler.short_lines(dutch_word)+"\n"+phonetics
             label.setText(label_text)
 
             if not slider_added:
@@ -550,7 +528,7 @@ class UserInterface:
             # save statistics
             DataHandler.save_data_json()
             # ask for a new vocab
-            UserInterface.start_german_dutch(self)
+            UiHandler.start_german_dutch(self)
 
         # SET UP THE LAYOUT
 
@@ -563,11 +541,11 @@ class UserInterface:
                 widget.deleteLater()
 
         # Create a QLabel with vocabulary to ask
-        dutch_word, correct_translation, phonetics, vocab_nr = ProgramLogic.ask_question()
+        dutch_word, correct_translation, phonetics, vocab_nr = LogicHandler.ask_question()
         german_word = correct_translation
 
         # ToDo: if phenetics is empty, don't show it
-        label_text = ProgramLogic.short_lines(german_word)
+        label_text = LogicHandler.short_lines(german_word)
         label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
         label.setFont(QFont("Times New Roman", 24))
         label.setFixedSize(500,300) # width, height
@@ -612,11 +590,11 @@ class UserInterface:
             nonlocal label_text
             nonlocal slider_added
             nonlocal direction
-            if label_text == ProgramLogic.short_lines(dutch_word)+"\n"+phonetics:
-                label_text = ProgramLogic.short_lines(correct_translation)
+            if label_text == LogicHandler.short_lines(dutch_word)+"\n"+phonetics:
+                label_text = LogicHandler.short_lines(correct_translation)
                 direction = "Dutch -> German"
             else:
-                label_text = ProgramLogic.short_lines(dutch_word)+"\n"+phonetics
+                label_text = LogicHandler.short_lines(dutch_word)+"\n"+phonetics
                 direction = "German -> Dutch"
             label.setText(label_text)
 
@@ -667,7 +645,7 @@ class UserInterface:
             # save statistics
             DataHandler.save_data_json()
             # ask for a new vocab
-            UserInterface.start_random(self)
+            UiHandler.start_random(self)
 
         # SET UP THE LAYOUT
 
@@ -680,13 +658,13 @@ class UserInterface:
                 widget.deleteLater()
 
         # Create a QLabel with vocabulary to ask
-        dutch_word, correct_translation, phonetics, vocab_nr = ProgramLogic.ask_question()
+        dutch_word, correct_translation, phonetics, vocab_nr = LogicHandler.ask_question()
 
         # ToDo: if phenetics is empty, don't show it
         if random.randint(0,1) == 0:
-            label_text = ProgramLogic.short_lines(dutch_word)+"\n"+phonetics
+            label_text = LogicHandler.short_lines(dutch_word)+"\n"+phonetics
         else:
-            label_text = ProgramLogic.short_lines(correct_translation)
+            label_text = LogicHandler.short_lines(correct_translation)
         label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
         label.setFont(QFont("Times New Roman", 24))
         label.setFixedSize(500,300) # width, height
@@ -732,17 +710,17 @@ class UserInterface:
             nonlocal slider_added
 
             # change the label for the vocabulary (first QLabel)
-            if label_text == ProgramLogic.short_lines(dutch_word, pixel=800)+"\n"+phonetics:
-                label_text = ProgramLogic.short_lines(correct_translation, pixel=800)
+            if label_text == LogicHandler.short_lines(dutch_word, pixel=800)+"\n"+phonetics:
+                label_text = LogicHandler.short_lines(correct_translation, pixel=800)
             else:
-                label_text = ProgramLogic.short_lines(dutch_word, pixel=800)+"\n"+phonetics
+                label_text = LogicHandler.short_lines(dutch_word, pixel=800)+"\n"+phonetics
             label.setText(label_text)
 
             # change the label for the ai sentence (second QLabel)
-            if label_text_ai == ProgramLogic.short_lines(ai_sentence, pixel=800):
-                label_text_ai = ProgramLogic.short_lines(ai_sentence_translation, pixel=800)
+            if label_text_ai == LogicHandler.short_lines(ai_sentence, pixel=800):
+                label_text_ai = LogicHandler.short_lines(ai_sentence_translation, pixel=800)
             else:
-                label_text_ai = ProgramLogic.short_lines(ai_sentence, pixel=800)
+                label_text_ai = LogicHandler.short_lines(ai_sentence, pixel=800)
             label_ai_sentence.setText(label_text_ai)
 
             if not slider_added:
@@ -789,7 +767,7 @@ class UserInterface:
             # save statistics
             DataHandler.save_data_json()
             # ask for a new vocab
-            UserInterface.start_ai_sentences(self)
+            UiHandler.start_ai_sentences(self)
 
         # SET UP THE LAYOUT
 
@@ -802,9 +780,9 @@ class UserInterface:
                 widget.deleteLater()
 
         # Create a QLabel with vocabulary to ask
-        dutch_word, correct_translation, phonetics, vocab_nr = ProgramLogic.ask_question()
+        dutch_word, correct_translation, phonetics, vocab_nr = LogicHandler.ask_question()
 
-        label_text = ProgramLogic.short_lines(dutch_word)+"\n"+phonetics
+        label_text = LogicHandler.short_lines(dutch_word)+"\n"+phonetics
         label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
         label.setFont(QFont("Times New Roman", 24))
         label.setFixedSize(800,200) # width, height
@@ -818,7 +796,7 @@ class UserInterface:
         logic_handler.sound_created = False
         
         # Create second Qlabel, which will show the AI sentence
-        label_text_ai = ProgramLogic.short_lines(ai_sentence, pixel=800)
+        label_text_ai = LogicHandler.short_lines(ai_sentence, pixel=800)
         label_ai_sentence = QLabel(label_text_ai, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
         label_ai_sentence.setFont(QFont("Times New Roman", 20))
         label_ai_sentence.setFixedSize(800,300) # width, height
@@ -972,7 +950,7 @@ class UserInterface:
     def explore_statistics(self):
 
         def back_to_main_menu():
-            UserInterface.main_menu(self)
+            UiHandler.main_menu(self)
         
         # Remove existing widgets from the layout
         layout = self.window.centralWidget().layout()
@@ -983,11 +961,11 @@ class UserInterface:
                 widget.deleteLater()
 
         # transform all data into a table form
-        table_data = ProgramLogic.create_statistics_data()
+        table_data = LogicHandler.create_statistics_data()
 
         # Create a pyqt table with that data
         table = QTableView()
-        model = TableModel(table_data)
+        model = TableHandler(table_data)
         table.setModel(model)
 
         # Enable sorting
@@ -1036,13 +1014,13 @@ class UserInterface:
 
         # # actually refresh the data
         try:
-            DataHandler.load_and_check_xlsx(XLSX_FILE)
+            DataHandler.load_and_check_xlsx(config.XLSX_FILE)
             DataHandler.save_data_json()
         except Exception as e:
             print(f"\n\nError while loading vocabulary: \n{e}")
 
         # go back to main menu
-        UserInterface.main_menu(self)
+        UiHandler.main_menu(self)
 
     # show a message that there are no more vocs to train
     def no_more_vocs(self):
@@ -1075,9 +1053,8 @@ class UserInterface:
     def run(self):
         sys.exit(self.app.exec())
 
-# connection to Open AI API, to generate sentences and sound in the AI training mode
 class OpenAiHandler:
-
+    """A class to handle the connection to the OpenAI API"""
     def __init__(self):
         self.OpenAiClient = OpenAI(
             api_key=os.environ['OPENAI_API_KEY'],
@@ -1186,9 +1163,8 @@ class OpenAiHandler:
             print("Sound already created, playing it...")
             gui_handler.play_sound("generated_audio.mp3")
 
-# extensive functions that are used in the program, outsourced to a separate class for better overview
-class ProgramLogic:
-
+class LogicHandler:
+    """A class to handle the main logic of the program"""
     def __init__(self) -> None:
         self.modus = None # modus keeps track of the training type that the user is currently in (DG, GD, RA, AI), mode will be used by other functions to determine the behavior of the program
         self.sound_created = False
@@ -1210,7 +1186,7 @@ class ProgramLogic:
         except FileNotFoundError:
             print("\n\nNo vocabulary data found as json. Trying to load it from xlsx file.\n")
             try:
-                DataHandler.load_and_check_xlsx(XLSX_FILE)
+                DataHandler.load_and_check_xlsx(config.XLSX_FILE)
             except Exception:
                 print("\n\nError: \nNo vocabulary data found as json or xlsx. An example file with the name 'VOCABS.xlsx' will be created in the '/files' directory, fill in your Vocabulary there.\nThe program will exit after creating the new file.\n\n")
                 q_app = QApplication(sys.argv)
@@ -1236,8 +1212,8 @@ class ProgramLogic:
                     }
                 """)
                 msg.exec()
-                #DataHandler.create_empty_xlsx(XLSX_FILE)
-                #os.startfile(os.path.abspath(XLSX_FILE))
+                DataHandler.create_empty_xlsx(config.XLSX_FILE)
+                os.startfile(os.path.abspath(config.XLSX_FILE))
                 sys.exit()
     
     @staticmethod
@@ -1406,7 +1382,7 @@ class ProgramLogic:
             # return the chosen vocab nr
             return chosen_vocab
         except:
-            UserInterface.no_more_vocs(UserInterface.instance[0])
+            UiHandler.no_more_vocs(UiHandler.instance[0])
             #freeze application for 10 seconds
             time.sleep(10)
             # stop the program
@@ -1416,7 +1392,7 @@ class ProgramLogic:
     # get the right data for the question
     def ask_question():
         global vocab_nr
-        vocab_nr = ProgramLogic.choose_vocab()
+        vocab_nr = LogicHandler.choose_vocab()
         # alternatively random vocab selection:
         #vocab_nr = random.randint(0, len(DataHandler.data_frame[0])-1)
         print(vocab_nr)
@@ -1525,9 +1501,9 @@ class ProgramLogic:
 
 def main():
     # check if vocabulary data is available, if not, create an example file
-    ProgramLogic.search_vocabulary_data()
+    LogicHandler.search_vocabulary_data()
     # check if OpenAI API key is available, if not exit
-    ProgramLogic.search_openai_api_key()
+    LogicHandler.search_openai_api_key()
 
     # add todays date to current_date
     date = datetime.date.today()
@@ -1539,11 +1515,11 @@ def main():
 
     # initialize the ProgramLogic class
     global logic_handler
-    logic_handler = ProgramLogic()
+    logic_handler = LogicHandler()
 
     # initialize the user interface
     global gui_handler
-    gui_handler = UserInterface()
+    gui_handler = UiHandler()
     gui_handler.run()
 
 if __name__ == "__main__":
