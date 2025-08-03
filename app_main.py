@@ -73,7 +73,12 @@ class Data:
     current_date = []       # df[10]: current date, gets updated every time the program is started
     session_vocabs = []     # temporary storage of what vocabs where asked this session
 
-    def load_and_check_xlsx(filename):
+    def add_current_date() -> None:
+        """Add the current date to the current_date list."""
+        date = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        Data.current_date.append(date)
+
+    def load_and_check_xlsx(filename: str) -> None:
         """Load vocabulary from an Excel file. Check if the file exists and if it contains the correct columns."""
         print("Loading vocabulary from Excel file...")
         if not os.path.exists(filename):
@@ -106,28 +111,30 @@ class Data:
         # when there is a json file, then load the lists from the file and adjust them
         if os.path.exists(config.JSON_FILE):
             Data.load_data_json()
-            Data.adjust_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list)
+            Data.adjust_json_from_excel(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list)
 
-    def create_new_json(temp_dutch_voc_list, temp_german_voc_list, temp_phonetics_list):
-            print("No json data found. Creating new json data...")
-            Data.dutch_voc_list = temp_dutch_voc_list
-            Data.german_voc_list = temp_german_voc_list
-            Data.phonetics_list = temp_phonetics_list
-            Data.asked = [0] * len(temp_dutch_voc_list)
-            Data.correct = [0] * len(temp_dutch_voc_list)
-            Data.wrong = [0] * len(temp_dutch_voc_list)
-            for i in range(len(temp_dutch_voc_list)):
-                Data.points.append([])
-                Data.d_g_points.append([])
-                Data.g_d_points.append([])
-            Data.last_asked = ["never"] * len(temp_dutch_voc_list)
-            Data.current_date = [datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")]
+    def create_new_json(temp_dutch_voc_list: list, temp_german_voc_list: list, temp_phonetics_list: list) -> None:
+        """Create a new json file with the vocabulary data."""
+        print("No json data found. Creating new json data...")
+        Data.dutch_voc_list = temp_dutch_voc_list
+        Data.german_voc_list = temp_german_voc_list
+        Data.phonetics_list = temp_phonetics_list
+        Data.asked = [0] * len(temp_dutch_voc_list)
+        Data.correct = [0] * len(temp_dutch_voc_list)
+        Data.wrong = [0] * len(temp_dutch_voc_list)
+        for i in range(len(temp_dutch_voc_list)):
+            Data.points.append([])
+            Data.d_g_points.append([])
+            Data.g_d_points.append([])
+        Data.last_asked = ["never"] * len(temp_dutch_voc_list)
+        Data.current_date = [datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")]
 
-            # combine dutch, german and phonetics list into a nested list, the data frame
-            Data.data_frame = [Data.dutch_voc_list, Data.german_voc_list, Data.phonetics_list, Data.asked, Data.correct, Data.wrong, Data.points, Data.last_asked, Data.current_date]
+        # combine dutch, german and phonetics list into a nested list, the data frame
+        Data.data_frame = [Data.dutch_voc_list, Data.german_voc_list, Data.phonetics_list, Data.asked, Data.correct, Data.wrong, Data.points, Data.last_asked, Data.current_date]
 
-    def adjust_json(temp_dutch_voc_list: list, temp_german_voc_list: list, temp_phonetics_list: list) -> None:
+    def adjust_json_from_excel(temp_dutch_voc_list: list, temp_german_voc_list: list, temp_phonetics_list: list) -> None:
         """
+        Adjust the json data to the new vocabulary from the Excel file.
         The rows must not be changed in order (row 1 must always be reserved for the same vocabulary but we might slightly alter the dutch or german writing). There are three cases to consider:
         1.) german or dutch translation is altered but the amount of rows is the same: if yes change it in the json
         2.) more rows in xlsx than in json: add additional rows of xlsx to json and give them default values for asked, correct, wrong, points, last_asked
@@ -167,7 +174,7 @@ class Data:
             raise Exception("Error: The docx file contains less rows than the json file. Please add the missing rows to the docx file or delete the json file to create a new one.")
 
 
-    def save_data_json():
+    def save_data_json() -> None:
         """Save the vocabulary data to a json file."""
         with open(config.JSON_FILE, 'w') as file:
             json.dump([ Data.dutch_voc_list, 
@@ -183,8 +190,8 @@ class Data:
                         Data.current_date]
                        , file)
 
-    # load dutch_voc_list, german_voc_list, phonetics_list from a json file
-    def load_data_json():
+    def load_data_json() -> list:
+        """Load the vocabulary data from a json file."""
         with open(config.JSON_FILE, 'r') as file:
             loaded_data_frame = json.load(file)
             Data.dutch_voc_list = loaded_data_frame[0]
@@ -222,13 +229,13 @@ class Data:
 
             return loaded_data_frame
 
-    # print complete vocabulary list to console
-    def print_complete_voc_list():
+    def print_complete_voc_list() -> None:
+        """Print the complete vocabulary list to the console."""
         for i in range(len(Data.dutch_voc_list)):
             print(Data.dutch_voc_list[i], " :: ", Data.german_voc_list[i])
             print("")
 
-    def create_empty_xlsx(filename):
+    def create_empty_xlsx(filename: str) -> None:
         """Create an empty Excel file with the correct structure."""
         workbook = openpyxl.Workbook()
         sheet = workbook.active
@@ -237,31 +244,16 @@ class Data:
 
 class GUI:
     """A class to handle the user interface with pyqt"""
-    instance = []
-    def __init__(self):
-
+    def __init__(self) -> None:
         # initialize the pygame mixer for playing sound files
         mixer.init()
 
-        GUI.instance.append(self)
         self.app = QApplication([])
         self.window = QMainWindow()
-        self.main_menu()
-    
-    def play_sound(self, file_name):
-        os.chdir(config.FILES_PATH)
-        # make a copy of the file so that it can be overwritten
-        mixer.music.load(file_name)  # Load the sound file
-        mixer.music.play()  # Play the sound file
-        # wait until the sound is finished playing
-        while mixer.music.get_busy():
-            pass
-        # load a dummy file so that the "generated_audio.mp3" can be overwritten and be used again
-        mixer.music.load("audio_dummy.wav")
-        os.chdir(config.MAIN_PATH)
+        self.start_main_menu()
 
-    # ramp up the main menu
-    def main_menu(self):
+    def start_main_menu(self) -> None:
+        """Set up the main menu as part of the GUI."""
         # Create a central widget and set it as the main widget for the window
         central_widget = QWidget()
         self.window.setCentralWidget(central_widget)
@@ -306,10 +298,9 @@ class GUI:
         self.window.setWindowTitle('Vocabulary App')
         self.window.showMaximized()  # Open in fullscreen mode
 
-    # train vocabs after pressing the button in the main menu
-    def select_training_type(self):
+    def select_training_type(self) -> None:
+        """Set up the training type selection screen as part of the GUI."""
         
-        # SET UP THE LAYOUT
         # three buttons, one for Dutch -> German, one for German -> Dutch, Random; they launch the respective functions
 
         # Remove existing widgets from the layout
@@ -353,20 +344,17 @@ class GUI:
         button_random.clicked.connect(self.start_random)
         button_advanced_mode.clicked.connect(self.start_advanced_mode)
 
-    # go back to main menu
-    def end_training(self):
-        GUI.main_menu(self)
+    def end_training(self) -> None:
+        """End the training and return to the main menu when the user clicks the 'End Training' button."""
+        GUI.start_main_menu(self)
 
-    # show dutch vocab and ask for german translation
-    def start_dutch_german(self):
-        # change the modus to DG
-        logic.modus = "DG"
+    def start_dutch_german(self) -> None:
+        """Set up the training screen for Dutch -> German translations."""
+        logic.modus = "DG" # change the modus to DG
+        slider_added = False # boolean to check if a slider was already added
 
-        # boolean to check if a slider was already added
-        slider_added = False
-
-        # show translation of the word; make slider visible
-        def show_translation():
+        def show_translation() -> None:
+            """Show the translation of the Dutch word and add a slider to evaluate how well the translation was known."""
             nonlocal label_text
             nonlocal slider_added
             if label_text == Logic.short_lines(dutch_word)+"\n"+phonetics:
@@ -398,9 +386,9 @@ class GUI:
 
                 #update screen  
                 self.window.update()
-        
-        # save the statistics and continue with next word
-        def next_vocab():
+
+        def next_vocab() -> None:
+            """Save the statistics and continue with the next vocabulary."""
             print(vocab_nr)
             # add +1 to asked
             Data.asked[vocab_nr] += 1
@@ -466,13 +454,10 @@ class GUI:
         button_end_training.clicked.connect(self.end_training)
         button_next_vok.clicked.connect(next_vocab)
 
-    # show german vocab and ask for dutch translation
-    def start_german_dutch(self):
-        # change the modus to GD
-        logic.modus = "GD"
-
-        # boolean to check if a slider was already added
-        slider_added = False
+    def start_german_dutch(self) -> None:
+        """Set up the training screen for German -> Dutch translations."""
+        logic.modus = "GD" # change the modus to GD
+        slider_added = False # boolean to check if a slider was already added
 
         # show translation of the word; make slider visible
         def show_translation():
@@ -576,17 +561,14 @@ class GUI:
         button_end_training.clicked.connect(self.end_training)
         button_next_vok.clicked.connect(next_vocab)
 
-    # randomly ask for a dutch or german word
-    def start_random(self):
-        # change the modus to Random
-        logic.modus = "RA"
-
-        # boolean to check if a slider was already added
-        slider_added = False
+    def start_random(self) -> None:
+        """Set up the training screen for random translations."""
+        logic.modus = "RA" # change the modus to RA
+        slider_added = False # boolean to check if a slider was already added
         direction = ""
 
-        # show translation of the word; make slider visible
-        def show_translation():
+        def show_translation() -> None:
+            """Show the translation of the Dutch word and add a slider to evaluate how well the translation was known."""
             nonlocal label_text
             nonlocal slider_added
             nonlocal direction
@@ -622,8 +604,9 @@ class GUI:
                 #update screen  
                 self.window.update()
         
-        # save the statistics and continue with next word
-        def next_vocab():
+        def next_vocab() -> None:
+            """Save the statistics and continue with the next vocabulary."""
+            global vocab_nr
             print(vocab_nr)
             # add +1 to asked
             Data.asked[vocab_nr] += 1
@@ -695,16 +678,13 @@ class GUI:
         button_end_training.clicked.connect(self.end_training)
         button_next_vok.clicked.connect(next_vocab)
 
-    # show dutch vocab and ai generated sentence and ask for german translation
-    def start_ai_sentences(self):
-        # change the modus to AI
-        logic.modus = "AI"
+    def start_ai_sentences(self) -> None:
+        """Set up the training screen for AI generated sentences."""
+        logic.modus = "AI" # change the modus to AI
+        slider_added = False # boolean to check if a slider was already added
 
-        # boolean to check if a slider was already added
-        slider_added = False
-
-        # show translation of the word; make slider visible
-        def show_translation():
+        def show_translation() -> None:
+            """Show the translation of the Dutch word and add a slider to evaluate how well the translation was known."""
             nonlocal label_text
             nonlocal label_text_ai
             nonlocal slider_added
@@ -747,8 +727,8 @@ class GUI:
                 #update screen  
                 self.window.update()
         
-        # save the statistics and continue with next word
-        def next_vocab():
+        def next_vocab() -> None:
+            """Save the statistics and continue with the next vocabulary."""
             print(vocab_nr)
             # add +1 to asked
             Data.asked[vocab_nr] += 1
@@ -837,11 +817,9 @@ class GUI:
         # refresh the window
         self.window.update()
 
-    # settings for advanced mode, show 3 dropdowns and one start button
-    def start_advanced_mode(self):
-        # change the modus to settings
-        logic.modus = "SE"
-
+    def start_advanced_mode(self) -> None:
+        """Set up the advanced mode screen with dropdowns for voice model, language direction, and sentence style."""
+        logic.modus = "SE" # change the modus to settings
         # set all dropdowns to the first option in the logic_handler
         logic.voice_model = "alloy"
         logic.language_direction_ai = "DG"
@@ -902,8 +880,9 @@ class GUI:
         self.sentence_style_dropdown.currentIndexChanged.connect(self.on_sentence_style_change)
         button_start_advanced_training.clicked.connect(self.start_ai_sentences)
 
-    # dropdown change in the menu for advanced mode (voice model)
-    def on_voice_model_change(self, index):
+    def on_voice_model_change(self, index) -> None:
+        """Change the voice model based on the selected index in the dropdown."""
+        # set the voice model in the logic_handler
         logic.voice_model = self.voice_model_dropdown.itemText(index)
         #change to file folder
         os.chdir(config.FILES_PATH)
@@ -928,15 +907,15 @@ class GUI:
         # back to main folder
         os.chdir(config.MAIN_PATH)
 
-    # dropdown change in the menu for advanced mode (language direction)
-    def on_language_change(self, index):
+    def on_language_change(self, index: int) -> None:
+        """Change the language direction based on the selected index in the dropdown."""
         if index == 0:
             logic.language_direction_ai = "DG"
         elif index == 1:
             logic.language_direction_ai = "GD"
 
-    # dropdown change in the menu for advanced mode (sentence style)
-    def on_sentence_style_change(self, index):
+    def on_sentence_style_change(self, index: int) -> None:
+        """Change the sentence style based on the selected index in the dropdown."""
         if index == 0:
             logic.sentence_style_ai = "creative"
         elif index == 1:
@@ -946,11 +925,11 @@ class GUI:
         elif index == 3:
             logic.sentence_style_ai = "offensive"
 
-    # show statistics in a table after pressing the button in the main menu	
-    def explore_statistics(self):
+    def explore_statistics(self) -> None:
+        """Set up the statistics screen as part of the GUI."""
 
         def back_to_main_menu():
-            GUI.main_menu(self)
+            GUI.start_main_menu(self)
         
         # Remove existing widgets from the layout
         layout = self.window.centralWidget().layout()
@@ -985,8 +964,8 @@ class GUI:
         # refresh the window
         self.window.update()
 
-    # load vocabulary from docx file within the application via button in the main menu
-    def refresh_vocabulary(self):
+    def refresh_vocabulary(self) -> None:
+        """Refresh the vocabulary by loading the data from the xlsx file."""
         # SET UP THE LAYOUT
 
         # Remove existing widgets from the layout
@@ -1020,11 +999,10 @@ class GUI:
             print(f"\n\nError while loading vocabulary: \n{e}")
 
         # go back to main menu
-        GUI.main_menu(self)
+        GUI.start_main_menu(self)
 
-    # show a message that there are no more vocs to train
-    def no_more_vocs(self):
-        # SET UP THE LAYOUT
+    def no_more_vocs(self) -> None:
+        """Set up the layout for the 'no more vocs' message.""" 
 
         # Remove existing widgets from the layout
         layout = self.window.centralWidget().layout()
@@ -1049,19 +1027,32 @@ class GUI:
         info_label.setStyleSheet("background-color: #f0f0f0;")
         QCoreApplication.processEvents()
 
-    # initialize the ui
+    def play_sound(self, file_name: str) -> None:
+        """Play a sound file from the files folder."""
+        os.chdir(config.FILES_PATH)
+        # make a copy of the file so that it can be overwritten
+        mixer.music.load(file_name)  # Load the sound file
+        mixer.music.play()  # Play the sound file
+        # wait until the sound is finished playing
+        while mixer.music.get_busy():
+            pass
+        # load a dummy file so that the "generated_audio.mp3" can be overwritten and be used again
+        mixer.music.load("audio_dummy.wav")
+        os.chdir(config.MAIN_PATH)
+   
+    # initialize the UI
     def run(self):
         sys.exit(self.app.exec())
 
 class AiApi:
     """A class to handle the connection to the OpenAI API"""
-    def __init__(self):
+    def __init__(self) -> None:
         self.OpenAiClient = OpenAI(
             api_key=os.environ['OPENAI_API_KEY'],
         )
     
-    # load the preprompt from text files in the files-directory
-    def get_preprompt(prompt_modus): 
+    def get_preprompt(prompt_modus: str) -> str:
+        """Load the preprompt from a text file based on the prompt modus."""
         # load the preprompt from the external file
         os.chdir(config.FILES_PATH)
         if prompt_modus == "sentence":
@@ -1074,8 +1065,8 @@ class AiApi:
         os.chdir(config.MAIN_PATH)
         return preprompt
 
-    # take dutch phrase and generate example sentence in dutch
-    def generate_AI_sentence(phrase, client):
+    def generate_AI_sentence(phrase: str, client: object) -> str:
+        """Generate an AI sentence based on the given phrase."""
 
         # reset the chat history
         chat_history = [
@@ -1109,8 +1100,8 @@ class AiApi:
         print(response_message)
         return response_message
     
-    # take dutch sentence and generate translation into german
-    def generate_AI_translation(sentence, client):
+    def generate_AI_translation(sentence: str, client: object) -> str:
+        """Generate an AI translation of the given sentence from Dutch to German."""
         # reset the chat history
         chat_history = [
             {
@@ -1143,8 +1134,8 @@ class AiApi:
         print(response_message)
         return response_message
     
-    # generate sound from text with openai tts-1-hd, play it with pygame in the ui
-    def text_to_speech(text, client, voice_agent):
+    def text_to_speech(text: str, client: object, voice_agent: str) -> None:
+        """Generate sound from text using OpenAI's TTS-1-HD and play it with Pygame."""
 
         # check if sound was already created, otherwise create it
         if not logic.sound_created:
@@ -1248,7 +1239,7 @@ class Logic:
             msg.exec()
             sys.exit()
 
-    def choose_vocab(show_console_text = True):
+    def choose_vocab(show_console_text: bool = True) -> int:
         """
         Choose the vocabulary to be asked next.
         Decision is based on three sublists:
@@ -1260,8 +1251,8 @@ class Logic:
             b.) Never ask the same item twice in a row (in fact an asked voc gets blocked for ten iterations).
         """
 
-        # shuffle a list when several items have the same score in a sublist
-        def shuffle_list(list_to_shuffle):
+        def shuffle_list(list_to_shuffle: list) -> list:
+            """Shuffle a list of lists based on the first element of each sublist."""
             # Group elements by value
             groups = {}
             for value, index in list_to_shuffle:
@@ -1280,8 +1271,8 @@ class Logic:
             
             return shuffled_list
         
-        # sort vocabs by when they were last asked
-        def create_sublist_last_asked():
+        def create_sublist_last_asked() -> list:
+            """Create a sublist that sorts the vocabs by when they were last asked."""
             list_last_asked = [] # list that sorts the vocabs by when they were last asked
             for i in range(len(Data.last_asked)):
                 # if the word was never asked, then add the date 01/01/2000 to the list
@@ -1296,8 +1287,8 @@ class Logic:
             if show_console_text: print("\nlist last asked: \n",list_last_asked)
             return list_last_asked
         
-        # sort vocabs by how often they were asked
-        def create_sublist_asked_often():
+        def create_sublist_asked_often() -> list:
+            """Create a sublist that sorts the vocabs by how often they were asked."""
             list_asked_often = [] # list that sorts the vocabs by how often it was asked
             for i in range(len(Data.asked)):
                 list_asked_often.append([Data.asked[i], i])
@@ -1308,8 +1299,8 @@ class Logic:
             if show_console_text: print("\nlist asked often: \n",list_asked_often)
             return list_asked_often
         
-        # sort vocabs by how many points they got in the last 10 times they were asked
-        def create_sublist_average_points():
+        def create_sublist_average_points() -> list:
+            """Create a sublist that sorts the vocabs by how many points they got in the last 10 times they were asked."""
             list_average_points = [] # list that sorts the vocabs by how many points they got in the last 10 times they were asked
             for i in range(len(Data.points)):
                 if len(Data.points[i]) > 10:
@@ -1325,8 +1316,8 @@ class Logic:
             if show_console_text: print("\nlist average points: \n",list_average_points)
             return list_average_points
         
-        # create a list with a final score of each vocab
-        def create_total_list():
+        def create_total_list() -> list:
+            """Create a total list that combines the three sublists and gives each vocab a score."""
             # when you are the last vocab in a certain list, you get 1 point, second last 2 points, third last 3 points, etc.
             # the score of all three lists gets combined in list_total_score
             list_total_score = []
@@ -1384,9 +1375,8 @@ class Logic:
             # stop the program
             sys.exit()
 
-
-    # get the right data for the question
-    def ask_question():
+    def ask_question() -> tuple: 
+        """Ask a question by choosing a random vocabulary and returning the Dutch word, its correct translation, phonetics, and the vocabulary number."""
         global vocab_nr
         vocab_nr = Logic.choose_vocab()
         # alternatively random vocab selection:
@@ -1401,8 +1391,11 @@ class Logic:
 
         return dutch_word, correct_translation, phonetics, vocab_nr
     
-    # if the text is too long, divide it into several lines
-    def short_lines(text, pixel = 500):
+    def short_lines(text: str, pixel: int = 500) -> str:
+        """
+        Divide a long text into multiple lines based on a character limit.
+        The limit is 30 characters for pixel=500 and 65 characters for pixel=800.
+        """
         words = text.split()  # Split the input text into words
         lines = []  # List to store the lines
 
@@ -1437,8 +1430,8 @@ class Logic:
         
         return text_output
 
-    # create statistical data that will be shown in a table under "Explore Statistics"
-    def create_statistics_data():
+    def create_statistics_data() -> pd.DataFrame:
+        """Create a DataFrame with statistics about the vocabulary training."""
         data_list = []
 
         # create a list that tells how many points the vocs have on average
@@ -1502,8 +1495,7 @@ def main():
     Logic.search_openai_api_key()
 
     # add todays date to current_date
-    date = datetime.date.today()
-    Data.current_date.append(date.strftime("%d/%m/%Y"))
+    Data.add_current_date()
 
     # initialize the open ai client to generate AI sentences
     global aiapi

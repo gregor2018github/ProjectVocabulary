@@ -10,11 +10,10 @@ The program can start with a json file or with a xlsx file. If there is no json 
 The vocabulary can constantly be enlarged by adding new words to the end of the xlsx file. Also translations can be changed. The order of rows must not be changed though.
 The main menu has a button to refresh the vocabulary list from the xlsx file while keeping the statistics from the json file.
 
-22.09.2023
+Recently added features: 
 
 An AI training modus was added to the program, where a given training word will result in randomly generated sentences. 
 Furthermore, the program is upgraded with text-to-speech (TTS) capabilities to read out the example sentences.
 Both features are based on the OpenAI API, which requires an API key to be saved as the environment variable OPENAI_API_KEY.
 
-04.02.2024
 """
