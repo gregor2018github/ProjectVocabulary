@@ -1190,8 +1190,6 @@ class GUI:
         """Change the voice model based on the selected index in the dropdown."""
         # set the voice model in the logic_handler
         logic.voice_model = self.voice_model_dropdown.itemText(index)
-        #change to file folder
-        os.chdir(config.FILES_PATH)
         if index == 0:
             logic.voice_model = "alloy"
             gui.play_sound("example_alloy.mp3")
@@ -1210,8 +1208,6 @@ class GUI:
         elif index == 5:
             logic.voice_model = "shimmer"
             gui.play_sound("example_shimmer.mp3")
-        # back to main folder
-        os.chdir(config.MAIN_PATH)
 
     def on_language_change(self, index: int) -> None:
         """Change the language direction based on the selected index in the dropdown."""
