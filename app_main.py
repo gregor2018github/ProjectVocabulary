@@ -4,13 +4,14 @@
 import datetime
 import json
 import os
+import sqlite3
 from openai import OpenAI
 import pandas as pd
 import random
 import sys
 import time
 from pygame import mixer
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLabel, QSlider, QTableView, QComboBox, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QSlider, QTableView, QTableWidget, QTableWidgetItem, QLineEdit, QComboBox, QMessageBox
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QCoreApplication
 import openpyxl
@@ -60,6 +61,7 @@ class Table(QAbstractTableModel):
 class Data:
     """A class to handle (load, save, manipulate) the data of the vocabulary"""
     data_frame = []         # nested list with all data combined
+    id_list = []           # SQLite row IDs, one per word (maps list index → DB id)
     dutch_voc_list = []     # df[0]: dutch word
     german_voc_list = []    # df[1]: german translation of the dutch word
     phonetics_list = []     # df[2]: phonetics of the dutch word
@@ -242,6 +244,175 @@ class Data:
         sheet.append(["DUTCH", "GERMAN", "NOTE"])
         workbook.save(filename)
 
+    # -------------------------------------------------------------------------
+    # SQLite persistence layer
+    # -------------------------------------------------------------------------
+
+    def init_db() -> None:
+        """Create the SQLite database and vocabulary table if they do not exist."""
+        os.makedirs(config.FILES_PATH, exist_ok=True)
+        conn = sqlite3.connect(config.DB_FILE)
+        conn.execute('''CREATE TABLE IF NOT EXISTS vocabulary (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            dutch       TEXT    NOT NULL,
+            german      TEXT    NOT NULL,
+            note        TEXT    DEFAULT '',
+            asked       INTEGER DEFAULT 0,
+            correct     INTEGER DEFAULT 0,
+            wrong       INTEGER DEFAULT 0,
+            points      TEXT    DEFAULT '[]',
+            d_g_points  TEXT    DEFAULT '[]',
+            g_d_points  TEXT    DEFAULT '[]',
+            last_asked  TEXT    DEFAULT 'never'
+        )''')
+        conn.commit()
+        conn.close()
+
+    def migrate_to_sqlite() -> None:
+        """Insert all current in-memory vocabulary into SQLite and archive old files."""
+        Data.init_db()
+        conn = sqlite3.connect(config.DB_FILE)
+        for i in range(len(Data.dutch_voc_list)):
+            conn.execute(
+                'INSERT INTO vocabulary (dutch, german, note, asked, correct, wrong, points, d_g_points, g_d_points, last_asked) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                (
+                    Data.dutch_voc_list[i],
+                    Data.german_voc_list[i],
+                    Data.phonetics_list[i],
+                    Data.asked[i],
+                    Data.correct[i],
+                    Data.wrong[i],
+                    json.dumps(Data.points[i]),
+                    json.dumps(Data.d_g_points[i]),
+                    json.dumps(Data.g_d_points[i]),
+                    Data.last_asked[i],
+                )
+            )
+        conn.commit()
+        conn.close()
+        # Archive source files so data is not lost
+        if os.path.exists(config.JSON_FILE):
+            os.rename(config.JSON_FILE, config.JSON_FILE + '.backup')
+        if os.path.exists(config.XLSX_FILE):
+            os.rename(config.XLSX_FILE, config.XLSX_FILE + '.backup')
+        print(f"Migration to SQLite complete: {len(Data.dutch_voc_list)} words written.")
+
+    def load_data_sqlite() -> None:
+        """Load all vocabulary rows from SQLite into the in-memory parallel lists."""
+        conn = sqlite3.connect(config.DB_FILE)
+        rows = conn.execute(
+            'SELECT id, dutch, german, note, asked, correct, wrong, points, d_g_points, g_d_points, last_asked FROM vocabulary ORDER BY id'
+        ).fetchall()
+        conn.close()
+
+        Data.id_list = []
+        Data.dutch_voc_list = []
+        Data.german_voc_list = []
+        Data.phonetics_list = []
+        Data.asked = []
+        Data.correct = []
+        Data.wrong = []
+        Data.points = []
+        Data.d_g_points = []
+        Data.g_d_points = []
+        Data.last_asked = []
+
+        for row in rows:
+            Data.id_list.append(row[0])
+            Data.dutch_voc_list.append(row[1])
+            Data.german_voc_list.append(row[2])
+            Data.phonetics_list.append(row[3])
+            Data.asked.append(row[4])
+            Data.correct.append(row[5])
+            Data.wrong.append(row[6])
+            Data.points.append(json.loads(row[7]))
+            Data.d_g_points.append(json.loads(row[8]))
+            Data.g_d_points.append(json.loads(row[9]))
+            Data.last_asked.append(row[10])
+
+        Data.data_frame = [
+            Data.dutch_voc_list, Data.german_voc_list, Data.phonetics_list,
+            Data.asked, Data.correct, Data.wrong, Data.points,
+            Data.last_asked, Data.current_date
+        ]
+        print(f"Loaded {len(Data.dutch_voc_list)} vocabulary words from SQLite.")
+
+    def save_row_sqlite(vocab_index: int) -> None:
+        """Persist the stats of a single vocabulary word to SQLite."""
+        db_id = Data.id_list[vocab_index]
+        conn = sqlite3.connect(config.DB_FILE)
+        conn.execute(
+            'UPDATE vocabulary SET asked=?, correct=?, wrong=?, points=?, d_g_points=?, g_d_points=?, last_asked=? WHERE id=?',
+            (
+                Data.asked[vocab_index],
+                Data.correct[vocab_index],
+                Data.wrong[vocab_index],
+                json.dumps(Data.points[vocab_index]),
+                json.dumps(Data.d_g_points[vocab_index]),
+                json.dumps(Data.g_d_points[vocab_index]),
+                Data.last_asked[vocab_index],
+                db_id,
+            )
+        )
+        conn.commit()
+        conn.close()
+
+    def add_vocabulary_to_db(dutch: str, german: str, note: str) -> int:
+        """Insert a new word into SQLite and append it to the in-memory lists. Returns the new DB id."""
+        conn = sqlite3.connect(config.DB_FILE)
+        cursor = conn.execute(
+            'INSERT INTO vocabulary (dutch, german, note) VALUES (?,?,?)',
+            (dutch, german, note)
+        )
+        new_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        Data.id_list.append(new_id)
+        Data.dutch_voc_list.append(dutch)
+        Data.german_voc_list.append(german)
+        Data.phonetics_list.append(note)
+        Data.asked.append(0)
+        Data.correct.append(0)
+        Data.wrong.append(0)
+        Data.points.append([])
+        Data.d_g_points.append([])
+        Data.g_d_points.append([])
+        Data.last_asked.append('never')
+        return new_id
+
+    def delete_vocabulary_from_db(db_id: int) -> None:
+        """Delete a word from SQLite and remove it from all in-memory lists."""
+        conn = sqlite3.connect(config.DB_FILE)
+        conn.execute('DELETE FROM vocabulary WHERE id=?', (db_id,))
+        conn.commit()
+        conn.close()
+        idx = Data.id_list.index(db_id)
+        Data.id_list.pop(idx)
+        Data.dutch_voc_list.pop(idx)
+        Data.german_voc_list.pop(idx)
+        Data.phonetics_list.pop(idx)
+        Data.asked.pop(idx)
+        Data.correct.pop(idx)
+        Data.wrong.pop(idx)
+        Data.points.pop(idx)
+        Data.d_g_points.pop(idx)
+        Data.g_d_points.pop(idx)
+        Data.last_asked.pop(idx)
+
+    def update_vocabulary_in_db(db_id: int, dutch: str, german: str, note: str) -> None:
+        """Update the Dutch, German, and note fields for a word in SQLite and in memory."""
+        conn = sqlite3.connect(config.DB_FILE)
+        conn.execute(
+            'UPDATE vocabulary SET dutch=?, german=?, note=? WHERE id=?',
+            (dutch, german, note, db_id)
+        )
+        conn.commit()
+        conn.close()
+        idx = Data.id_list.index(db_id)
+        Data.dutch_voc_list[idx] = dutch
+        Data.german_voc_list[idx] = german
+        Data.phonetics_list[idx] = note
+
 class GUI:
     """A class to handle the user interface with pyqt"""
     STYLESHEET = """
@@ -367,6 +538,29 @@ class GUI:
             min-width: 90px;
             min-height: 34px;
         }
+        QLineEdit {
+            background-color: #FFFFFF;
+            color: #2C3E50;
+            border: 1px solid #E0E4E8;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 14px;
+        }
+        QLineEdit:focus {
+            border-color: #3498DB;
+        }
+        QTableWidget {
+            background-color: #FFFFFF;
+            border: 1px solid #E0E4E8;
+            border-radius: 8px;
+            gridline-color: #F0F2F5;
+            selection-background-color: #EBF5FB;
+            selection-color: #2C3E50;
+            font-size: 13px;
+        }
+        QTableWidget::item {
+            padding: 6px 10px;
+        }
     """
 
     def __init__(self) -> None:
@@ -403,18 +597,24 @@ class GUI:
         self.explore_statistics_button = QPushButton('Explore Statistics')
         self.explore_statistics_button.setFixedSize(button_width, button_height)
 
-        self.refresh_vocabulary_button = QPushButton('Refresh Vocabulary List')
-        self.refresh_vocabulary_button.setFixedSize(button_width, button_height)
+        self.manage_vocabulary_button = QPushButton('Manage Vocabulary')
+        self.manage_vocabulary_button.setFixedSize(button_width, button_height)
+
+        self.exit_button = QPushButton('Exit')
+        self.exit_button.setFixedSize(button_width, button_height)
+        self.exit_button.setStyleSheet("background-color: #5A6A7A;")
 
         layout.addWidget(self.start_training_button)
         layout.addWidget(self.explore_statistics_button)
-        layout.addWidget(self.refresh_vocabulary_button)
+        layout.addWidget(self.manage_vocabulary_button)
+        layout.addWidget(self.exit_button)
 
         central_widget.setLayout(layout)
 
         self.start_training_button.clicked.connect(self.select_training_type)
         self.explore_statistics_button.clicked.connect(self.explore_statistics)
-        self.refresh_vocabulary_button.clicked.connect(self.refresh_vocabulary)
+        self.manage_vocabulary_button.clicked.connect(self.manage_vocabulary)
+        self.exit_button.clicked.connect(QApplication.instance().quit)
 
         self.window.setWindowTitle('Vocabulary Trainer')
         self.window.showMaximized()
@@ -521,7 +721,7 @@ class GUI:
                 Data.wrong[vocab_nr] += 1
 
             # save statistics
-            Data.save_data_json()
+            Data.save_row_sqlite(vocab_nr)
             # ask for a new vocab
             GUI.start_dutch_german(self)
 
@@ -617,7 +817,7 @@ class GUI:
                 Data.wrong[vocab_nr] += 1
 
             # save statistics
-            Data.save_data_json()
+            Data.save_row_sqlite(vocab_nr)
             # ask for a new vocab
             GUI.start_german_dutch(self)
 
@@ -732,7 +932,7 @@ class GUI:
                 Data.wrong[vocab_nr] += 1
 
             # save statistics
-            Data.save_data_json()
+            Data.save_row_sqlite(vocab_nr)
             # ask for a new vocab
             GUI.start_random(self)
 
@@ -851,7 +1051,7 @@ class GUI:
                 Data.wrong[vocab_nr] += 1
 
             # save statistics
-            Data.save_data_json()
+            Data.save_row_sqlite(vocab_nr)
             # ask for a new vocab
             GUI.start_ai_sentences(self)
 
@@ -1145,7 +1345,164 @@ class GUI:
         # load a dummy file so that the "generated_audio.mp3" can be overwritten and be used again
         mixer.music.load("audio_dummy.wav")
         os.chdir(config.MAIN_PATH)
-   
+
+    def manage_vocabulary(self) -> None:
+        """Screen for adding, editing, and deleting vocabulary words."""
+        central_widget = QWidget()
+        self.window.setCentralWidget(central_widget)
+        layout = QVBoxLayout()
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+        central_widget.setLayout(layout)
+
+        # Title
+        title_label = QLabel('Manage Vocabulary')
+        title_label.setFont(QFont("Segoe UI", 22, QFont.Weight.Light))
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setStyleSheet("color: #2C3E50; margin-bottom: 8px;")
+        layout.addWidget(title_label)
+
+        # Table
+        vocab_table = QTableWidget()
+        vocab_table.setColumnCount(3)
+        vocab_table.setHorizontalHeaderLabels(['Dutch', 'German', 'Note'])
+        vocab_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        vocab_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        vocab_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        vocab_table.horizontalHeader().setStretchLastSection(True)
+        vocab_table.verticalHeader().setVisible(False)
+        layout.addWidget(vocab_table)
+
+        self._selected_vocab_db_id = None
+
+        def refresh_table() -> None:
+            vocab_table.setRowCount(len(Data.dutch_voc_list))
+            for i in range(len(Data.dutch_voc_list)):
+                vocab_table.setItem(i, 0, QTableWidgetItem(str(Data.dutch_voc_list[i])))
+                vocab_table.setItem(i, 1, QTableWidgetItem(str(Data.german_voc_list[i])))
+                vocab_table.setItem(i, 2, QTableWidgetItem(str(Data.phonetics_list[i])))
+            vocab_table.clearSelection()
+            self._selected_vocab_db_id = None
+            dutch_input.clear()
+            german_input.clear()
+            note_input.clear()
+
+        # Form row
+        form_layout = QHBoxLayout()
+        form_layout.setSpacing(8)
+
+        lbl_dutch = QLabel("Dutch:")
+        lbl_dutch.setStyleSheet("font-size: 14px; font-weight: 600;")
+        dutch_input = QLineEdit()
+        dutch_input.setPlaceholderText("Dutch word...")
+        dutch_input.setFixedHeight(40)
+
+        lbl_german = QLabel("German:")
+        lbl_german.setStyleSheet("font-size: 14px; font-weight: 600;")
+        german_input = QLineEdit()
+        german_input.setPlaceholderText("German translation...")
+        german_input.setFixedHeight(40)
+
+        lbl_note = QLabel("Note:")
+        lbl_note.setStyleSheet("font-size: 14px; font-weight: 600;")
+        note_input = QLineEdit()
+        note_input.setPlaceholderText("Phonetics / note...")
+        note_input.setFixedHeight(40)
+
+        form_layout.addWidget(lbl_dutch)
+        form_layout.addWidget(dutch_input, 2)
+        form_layout.addWidget(lbl_german)
+        form_layout.addWidget(german_input, 2)
+        form_layout.addWidget(lbl_note)
+        form_layout.addWidget(note_input, 1)
+        layout.addLayout(form_layout)
+
+        # Button row
+        btn_layout = QHBoxLayout()
+        btn_add = QPushButton("Add Word")
+        btn_update = QPushButton("Update Selected")
+        btn_delete = QPushButton("Delete Selected")
+        btn_delete.setStyleSheet("background-color: #C0392B;")
+        btn_back = QPushButton("Back")
+        btn_back.setStyleSheet("background-color: #5A6A7A;")
+        for btn in (btn_add, btn_update, btn_delete, btn_back):
+            btn.setFixedHeight(44)
+            btn_layout.addWidget(btn)
+        layout.addLayout(btn_layout)
+
+        def on_row_selected() -> None:
+            if not vocab_table.selectedItems():
+                self._selected_vocab_db_id = None
+                return
+            row = vocab_table.currentRow()
+            self._selected_vocab_db_id = Data.id_list[row]
+            dutch_input.setText(str(Data.dutch_voc_list[row]))
+            german_input.setText(str(Data.german_voc_list[row]))
+            note_input.setText(str(Data.phonetics_list[row]))
+
+        def on_add() -> None:
+            dutch = dutch_input.text().strip()
+            german = german_input.text().strip()
+            note = note_input.text().strip()
+            if not dutch or not german:
+                msg = QMessageBox(self.window)
+                msg.setWindowTitle("Missing Data")
+                msg.setText("Dutch and German fields are required.")
+                msg.exec()
+                return
+            Data.add_vocabulary_to_db(dutch, german, note)
+            refresh_table()
+
+        def on_update() -> None:
+            if self._selected_vocab_db_id is None:
+                msg = QMessageBox(self.window)
+                msg.setWindowTitle("No Selection")
+                msg.setText("Please select a word to update.")
+                msg.exec()
+                return
+            dutch = dutch_input.text().strip()
+            german = german_input.text().strip()
+            note = note_input.text().strip()
+            if not dutch or not german:
+                msg = QMessageBox(self.window)
+                msg.setWindowTitle("Missing Data")
+                msg.setText("Dutch and German fields are required.")
+                msg.exec()
+                return
+            Data.update_vocabulary_in_db(self._selected_vocab_db_id, dutch, german, note)
+            refresh_table()
+
+        def on_delete() -> None:
+            if self._selected_vocab_db_id is None:
+                msg = QMessageBox(self.window)
+                msg.setWindowTitle("No Selection")
+                msg.setText("Please select a word to delete.")
+                msg.exec()
+                return
+            row = vocab_table.currentRow()
+            dutch_word = Data.dutch_voc_list[row]
+            reply = QMessageBox.question(
+                self.window, "Confirm Delete",
+                f"Delete '{dutch_word}' and all its training stats?\nThis cannot be undone.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                Data.delete_vocabulary_from_db(self._selected_vocab_db_id)
+                Data.session_vocabs = []  # reset session to avoid stale indices
+                refresh_table()
+
+        def back_action() -> None:
+            Data.session_vocabs = []  # reset session when returning from vocabulary management
+            self.start_main_menu()
+
+        refresh_table()
+        vocab_table.itemSelectionChanged.connect(on_row_selected)
+        btn_add.clicked.connect(on_add)
+        btn_update.clicked.connect(on_update)
+        btn_delete.clicked.connect(on_delete)
+        btn_back.clicked.connect(back_action)
+        self.window.update()
+
     # initialize the UI
     def run(self):
         sys.exit(self.app.exec())
@@ -1272,43 +1629,69 @@ class Logic:
     @staticmethod
     def search_vocabulary_data()-> None:
         """
-        Try to load vocabulary from json file, if it doesn't exist, then load it from xlsx file.
-        If neither exists, create an example xlsx file, explain to the user, open it for the user and exit the program.
+        Load vocabulary data with the following priority:
+        1. SQLite DB exists with rows → load directly.
+        2. Legacy JSON file exists → migrate to SQLite, then load.
+        3. Legacy XLSX file exists → migrate to SQLite, then load.
+        4. Nothing found → create an example SQLite DB and inform the user.
         """
-        try:
-            Data.data_frame = Data.load_data_json()
-        except FileNotFoundError:
-            print("\n\nNo vocabulary data found as json. Trying to load it from xlsx file.\n")
+        # Case 1: SQLite DB already populated
+        if os.path.exists(config.DB_FILE):
+            Data.init_db()
+            conn = sqlite3.connect(config.DB_FILE)
+            count = conn.execute('SELECT COUNT(*) FROM vocabulary').fetchone()[0]
+            conn.close()
+            if count > 0:
+                Data.load_data_sqlite()
+                return
+
+        # Case 2: Migrate from JSON
+        if os.path.exists(config.JSON_FILE):
+            print("Migrating vocabulary from JSON to SQLite...")
+            try:
+                Data.load_data_json()
+                Data.migrate_to_sqlite()
+                Data.load_data_sqlite()
+                return
+            except Exception as e:
+                print(f"JSON migration failed: {e}")
+
+        # Case 3: Migrate from XLSX
+        if os.path.exists(config.XLSX_FILE):
+            print("Migrating vocabulary from XLSX to SQLite...")
             try:
                 Data.load_and_check_xlsx(config.XLSX_FILE)
-            except Exception:
-                print("\n\nError: \nNo vocabulary data found as json or xlsx. An example file with the name 'VOCABS.xlsx' will be created in the '/files' directory, fill in your Vocabulary there.\nThe program will exit after creating the new file.\n\n")
-                q_app = QApplication(sys.argv)
-                msg = QMessageBox()
-                msg.setIcon(QMessageBox.Icon.Warning)
-                msg.setWindowTitle("Vocabulary File Missing")
-                msg.setText(
-                    "<b style='font-size:16px; color:#d9534f;'>No vocabulary data found!</b><br><br>"
-                    "<span style='font-size:13px;'>An example file named <b>'VOCABS.xlsx'</b> will be created in the <b>'/files'</b> directory.<br>"
-                    "Please fill in your vocabulary there.<br><br>"
-                    "<i>The program will exit after creating the new file.</i></span>"
-                )
-                msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-                msg.setStyleSheet("""
-                    QMessageBox {
-                        background-color: #f9f9f9;
-                        font-family: Arial;
-                    }
-                    QPushButton {
-                        min-width: 80px;
-                        min-height: 30px;
-                        font-size: 13px;
-                    }
-                """)
-                msg.exec()
-                Data.create_empty_xlsx(config.XLSX_FILE)
-                os.startfile(os.path.abspath(config.XLSX_FILE))
-                sys.exit()
+                Data.migrate_to_sqlite()
+                Data.load_data_sqlite()
+                return
+            except Exception as e:
+                print(f"XLSX migration failed: {e}")
+
+        # Case 4: No data found — create example DB
+        print("No vocabulary data found. Creating example database...")
+        q_app = QApplication.instance() or QApplication(sys.argv)
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Vocabulary File Missing")
+        msg.setText(
+            "<b style='font-size:16px; color:#d9534f;'>No vocabulary data found!</b><br><br>"
+            "<span style='font-size:13px;'>An example database has been created.<br>"
+            "Use <b>Manage Vocabulary</b> in the main menu to add your vocabulary.</span>"
+        )
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.setStyleSheet("""
+            QMessageBox { background-color: #f9f9f9; font-family: Arial; }
+            QPushButton { min-width: 80px; min-height: 30px; font-size: 13px; }
+        """)
+        msg.exec()
+        Data.init_db()
+        conn = sqlite3.connect(config.DB_FILE)
+        conn.execute("INSERT INTO vocabulary (dutch, german, note) VALUES ('hallo', 'hallo', 'ha-lo')")
+        conn.execute("INSERT INTO vocabulary (dutch, german, note) VALUES ('de kat', 'die Katze', '')")
+        conn.execute("INSERT INTO vocabulary (dutch, german, note) VALUES ('het huis', 'das Haus', '')")
+        conn.commit()
+        conn.close()
+        Data.load_data_sqlite()
     
     @staticmethod
     def search_openai_api_key() -> str:
