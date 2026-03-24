@@ -244,59 +244,180 @@ class Data:
 
 class GUI:
     """A class to handle the user interface with pyqt"""
+    STYLESHEET = """
+        * {
+            font-family: "Segoe UI", Arial, sans-serif;
+        }
+        QMainWindow {
+            background-color: #F5F6F8;
+        }
+        QWidget {
+            background-color: #F5F6F8;
+        }
+        QPushButton {
+            background-color: #2C3E50;
+            color: #FFFFFF;
+            border: none;
+            border-radius: 6px;
+            padding: 12px 24px;
+            font-size: 15px;
+            font-weight: 500;
+        }
+        QPushButton:hover {
+            background-color: #34495E;
+        }
+        QPushButton:pressed {
+            background-color: #1A252F;
+        }
+        QLabel {
+            color: #2C3E50;
+            background-color: transparent;
+        }
+        QLabel#card {
+            background-color: #FFFFFF;
+            border: 1px solid #E0E4E8;
+            border-radius: 10px;
+            padding: 20px;
+        }
+        QLabel#info {
+            background-color: #FFFFFF;
+            border: 1px solid #E0E4E8;
+            border-radius: 10px;
+            padding: 20px;
+            color: #5A6A7A;
+        }
+        QSlider::groove:horizontal {
+            height: 6px;
+            background: #E0E4E8;
+            border-radius: 3px;
+        }
+        QSlider::handle:horizontal {
+            background: #2C3E50;
+            border: 2px solid #FFFFFF;
+            width: 20px;
+            height: 20px;
+            margin: -8px 0;
+            border-radius: 11px;
+        }
+        QSlider::handle:horizontal:hover {
+            background: #3498DB;
+        }
+        QSlider::sub-page:horizontal {
+            background: #3498DB;
+            border-radius: 3px;
+        }
+        QComboBox {
+            background-color: #FFFFFF;
+            color: #2C3E50;
+            border: 1px solid #E0E4E8;
+            border-radius: 6px;
+            padding: 10px 16px;
+            font-size: 15px;
+        }
+        QComboBox:hover {
+            border-color: #3498DB;
+        }
+        QComboBox::drop-down {
+            border: none;
+            width: 30px;
+        }
+        QComboBox::down-arrow {
+            image: none;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 6px solid #2C3E50;
+            margin-right: 10px;
+        }
+        QComboBox QAbstractItemView {
+            background-color: #FFFFFF;
+            border: 1px solid #E0E4E8;
+            border-radius: 4px;
+            selection-background-color: #EBF5FB;
+            selection-color: #2C3E50;
+            padding: 4px;
+        }
+        QTableView {
+            background-color: #FFFFFF;
+            border: 1px solid #E0E4E8;
+            border-radius: 8px;
+            gridline-color: #F0F2F5;
+            selection-background-color: #EBF5FB;
+            selection-color: #2C3E50;
+            font-size: 13px;
+        }
+        QTableView::item {
+            padding: 6px 10px;
+        }
+        QHeaderView::section {
+            background-color: #F5F6F8;
+            color: #2C3E50;
+            font-weight: 600;
+            font-size: 13px;
+            border: none;
+            border-bottom: 2px solid #E0E4E8;
+            padding: 8px 10px;
+        }
+        QHeaderView::section:hover {
+            background-color: #EBF5FB;
+        }
+        QMessageBox {
+            background-color: #F5F6F8;
+        }
+        QMessageBox QPushButton {
+            min-width: 90px;
+            min-height: 34px;
+        }
+    """
+
     def __init__(self) -> None:
         # initialize the pygame mixer for playing sound files
         mixer.init()
 
         self.app = QApplication([])
+        self.app.setStyleSheet(GUI.STYLESHEET)
         self.window = QMainWindow()
         self.start_main_menu()
 
     def start_main_menu(self) -> None:
         """Set up the main menu as part of the GUI."""
-        # Create a central widget and set it as the main widget for the window
         central_widget = QWidget()
         self.window.setCentralWidget(central_widget)
-        # change background to image from the files folder
-        # central_widget = self.window.centralWidget()
-        # central_widget.setStyleSheet("background-image : url(files/background.jpg); background-position: center; background-repeat: no-repeat; background-size: cover;")
 
         layout = QVBoxLayout()
-        layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)  # Center horizontally
-        
-        # Create buttons with adjusted size and font size
-        button_width = 250
-        button_height = 60  # Adjust height if needed
-        font_size = 16  # Adjust font size as needed
-        
+        layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        layout.setSpacing(14)
+
+        # Title
+        title_label = QLabel('Vocabulary Trainer')
+        title_label.setFont(QFont("Segoe UI", 28, QFont.Weight.Light))
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setStyleSheet("color: #2C3E50; margin-bottom: 30px;")
+        layout.addWidget(title_label)
+
+        button_width = 280
+        button_height = 52
+
         self.start_training_button = QPushButton('Start Training')
         self.start_training_button.setFixedSize(button_width, button_height)
-        self.start_training_button.setFont(QFont("Arial", font_size))
-        
+
         self.explore_statistics_button = QPushButton('Explore Statistics')
         self.explore_statistics_button.setFixedSize(button_width, button_height)
-        self.explore_statistics_button.setFont(QFont("Arial", font_size))
-        
+
         self.refresh_vocabulary_button = QPushButton('Refresh Vocabulary List')
         self.refresh_vocabulary_button.setFixedSize(button_width, button_height)
-        self.refresh_vocabulary_button.setFont(QFont("Arial", font_size))
-        
-        # Add buttons to layout
+
         layout.addWidget(self.start_training_button)
         layout.addWidget(self.explore_statistics_button)
         layout.addWidget(self.refresh_vocabulary_button)
-        
-        # Set the layout for the central widget
+
         central_widget.setLayout(layout)
-        
-        # Connect button clicks to their respective functions
+
         self.start_training_button.clicked.connect(self.select_training_type)
         self.explore_statistics_button.clicked.connect(self.explore_statistics)
         self.refresh_vocabulary_button.clicked.connect(self.refresh_vocabulary)
-        
-        # Set the window properties
-        self.window.setWindowTitle('Vocabulary App')
-        self.window.showMaximized()  # Open in fullscreen mode
+
+        self.window.setWindowTitle('Vocabulary Trainer')
+        self.window.showMaximized()
 
     def select_training_type(self) -> None:
         """Set up the training type selection screen as part of the GUI."""
@@ -311,28 +432,23 @@ class GUI:
             if widget:
                 widget.deleteLater()
         
-        # button dutch -> german
-        button_dutch_german = QPushButton('Dutch -> German')
-        button_dutch_german.setFixedSize(500, 60) # width, height
-        button_dutch_german.setFont(QFont("Arial", 16))
+        button_width = 320
+        button_height = 52
+
+        button_dutch_german = QPushButton('Dutch \u2192 German')
+        button_dutch_german.setFixedSize(button_width, button_height)
         layout.addWidget(button_dutch_german)
 
-        # button german -> dutch
-        button_german_dutch = QPushButton('German -> Dutch')
-        button_german_dutch.setFixedSize(500, 60) # width, height
-        button_german_dutch.setFont(QFont("Arial", 16))
+        button_german_dutch = QPushButton('German \u2192 Dutch')
+        button_german_dutch.setFixedSize(button_width, button_height)
         layout.addWidget(button_german_dutch)
 
-        # button random
         button_random = QPushButton('Random')
-        button_random.setFixedSize(500, 60) # width, height
-        button_random.setFont(QFont("Arial", 16))
+        button_random.setFixedSize(button_width, button_height)
         layout.addWidget(button_random)
 
-        # button Advanced Mode
         button_advanced_mode = QPushButton('Advanced Mode')
-        button_advanced_mode.setFixedSize(500, 60)
-        button_advanced_mode.setFont(QFont("Arial", 16))
+        button_advanced_mode.setFixedSize(button_width, button_height)
         layout.addWidget(button_advanced_mode)
 
         # refresh the window
@@ -419,37 +535,27 @@ class GUI:
             if widget:
                 widget.deleteLater()
 
-        # Create a QLabel with vocabulary to ask
         dutch_word, correct_translation, phonetics, vocab_nr = Logic.ask_question()
 
-        # ToDo: if phenetics is empty, don't show it
         label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
         label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
-        label.setFont(QFont("Times New Roman", 24))
-        label.setFixedSize(500,300) # width, height
-        #set border 
-        label.setStyleSheet("border: 1px solid black;")
+        label.setObjectName("card")
+        label.setFont(QFont("Segoe UI", 22, QFont.Weight.Light))
+        label.setFixedSize(500, 280)
 
-        # create a button under the label to show the correct translation
         button_translate = QPushButton('Show Translation')
-        button_translate.setFixedSize(500, 60) # width, height
-        button_translate.setFont(QFont("Arial", 16))
-        
+        button_translate.setFixedSize(500, 52)
+
         button_end_training = QPushButton('End Training')
-        button_end_training.setFixedSize(500, 60) # width, height
-        button_end_training.setFont(QFont("Arial", 16))
+        button_end_training.setFixedSize(500, 52)
 
         button_next_vok = QPushButton('Next Vocabulary')
-        button_next_vok.setFixedSize(500, 60) # width, height
-        button_next_vok.setFont(QFont("Arial", 16))
+        button_next_vok.setFixedSize(500, 52)
 
-        # Add the label to the layout
         layout.addWidget(label)
-        # put button 100 px more to the right
         layout.addWidget(button_translate)
-        layout.addWidget(button_end_training) #, alignment=Qt.AlignmentFlag.AlignBottom
+        layout.addWidget(button_end_training)
 
-        # # Connect button clicks to their respective functions
         button_translate.clicked.connect(show_translation)
         button_end_training.clicked.connect(self.end_training)
         button_next_vok.clicked.connect(next_vocab)
