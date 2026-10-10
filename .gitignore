@@ -3,4 +3,5 @@
 /DUTCH1.docx
 /DUTCH2.docx
 .claude
-/generated_audio.mp3
+/files/generated_audio.mp3
+__pycache__/
