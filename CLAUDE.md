@@ -54,3 +54,4 @@ Key packages (installed in `vocab_envi` venv): `PyQt6`, `openai`, `pandas`, `ope
 - Languages are currently hardcoded to Dutch and German throughout.
 - AI training mode only works for Dutch->German direction currently.
 - The `Data` class uses class-level mutable lists shared across all usage — there are no instances.
+- Colors live in the `THEMES` palettes (light/dark). `GUI.STYLESHEET` uses `$token` placeholders filled by `GUI.apply_theme()`, and painted widgets read the active `THEME` dict — don't hardcode hex colors in new UI. The chosen theme is stored in the SQLite `settings` table.

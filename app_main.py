@@ -10,6 +10,7 @@ import sqlite3
 from openai import OpenAI
 import pandas as pd
 import random
+import string
 import sys
 import time
 from pygame import mixer
@@ -22,19 +23,52 @@ import openpyxl
 
 import config
 
+# THEMES
+
+# color palettes for the stylesheet ($tokens in GUI.STYLESHEET) and the painted widgets
+THEMES = {
+    "light": {
+        "bg": "#F4F6FB", "surface": "#FFFFFF", "surface_alt": "#F9FAFB",
+        "border": "#E3E8EF", "border_strong": "#D1D5DB", "border_hover": "#9CA3AF",
+        "text": "#1F2937", "text_strong": "#111827", "text_body": "#374151", "text_muted": "#4B5563", "text_subtle": "#6B7280",
+        "accent": "#4F46E5", "accent_hover": "#4338CA", "accent_pressed": "#3730A3", "accent_soft": "#6366F1", "accent_text": "#4F46E5",
+        "accent_wash": "#EEF2FF", "accent_select": "#E0E7FF", "accent_text_select": "#C7D2FE",
+        "hover": "#F3F4F6", "pressed": "#E5E7EB", "segment_bg": "#E9ECF2", "segment_hover": "#DDE1E8", "segment_checked": "#FFFFFF",
+        "danger": "#DC2626", "danger_border": "#FCA5A5", "danger_hover": "#FEF2F2", "danger_pressed": "#FEE2E2",
+        "scroll": "#CBD5E1", "scroll_hover": "#94A3B8", "tooltip_bg": "#111827", "tooltip_text": "#F9FAFB",
+        "score_good": "#15803D", "score_bad": "#B91C1C", "score_mid": "#B45309",
+        # chart colors (validated for CVD separation and >= 3:1 contrast on the white chart panels)
+        "chart_blue": "#2A78D6", "chart_red": "#E34948",
+        "chart_grid": "#EEF0F3", "chart_baseline": "#CBD5E1", "chart_label": "#6B7280", "chart_hover": "#F3F4F6",
+        "chevron": "chevron_down.svg",
+    },
+    "dark": {
+        "bg": "#0F1117", "surface": "#1A1D27", "surface_alt": "#20242F",
+        "border": "#2A2F3C", "border_strong": "#3A4050", "border_hover": "#565E70",
+        "text": "#E5E7EB", "text_strong": "#F3F4F6", "text_body": "#D1D5DB", "text_muted": "#A3AAB8", "text_subtle": "#8B93A3",
+        "accent": "#5B5BD6", "accent_hover": "#6366F1", "accent_pressed": "#4F46E5", "accent_soft": "#818CF8", "accent_text": "#A5B4FC",
+        "accent_wash": "#262A45", "accent_select": "#2E3361", "accent_text_select": "#3B4180",
+        "hover": "#252A36", "pressed": "#2E3442", "segment_bg": "#1F2330", "segment_hover": "#2A2F3D", "segment_checked": "#343A4A",
+        "danger": "#F87171", "danger_border": "#7F1D1D", "danger_hover": "#2A1618", "danger_pressed": "#3A1A1D",
+        "scroll": "#3A4050", "scroll_hover": "#565E70", "tooltip_bg": "#F3F4F6", "tooltip_text": "#111827",
+        "score_good": "#4ADE80", "score_bad": "#F87171", "score_mid": "#FBBF24",
+        # lighter chart colors keep >= 3:1 contrast on the dark chart panels
+        "chart_blue": "#4A8FE7", "chart_red": "#EF6461",
+        "chart_grid": "#262B36", "chart_baseline": "#3A4050", "chart_label": "#8B93A3", "chart_hover": "#232835",
+        "chevron": "chevron_down_dark.svg",
+    },
+}
+THEME = dict(THEMES["light"])  # active palette; updated in place by GUI.apply_theme()
+
 # HELPERS
 
 def score_color(points: float) -> str:
     """Return the text color for a score, matching the thresholds for correct (> 60) and wrong (< 40)."""
     if points > 60:
-        return "#15803D"
+        return THEME["score_good"]
     if points < 40:
-        return "#B91C1C"
-    return "#B45309"
-
-# chart colors (validated for CVD separation and >= 3:1 contrast on the white chart panels)
-CHART_BLUE = "#2A78D6"   # single series / words added
-CHART_RED = "#E34948"    # words removed
+        return THEME["score_bad"]
+    return THEME["score_mid"]
 
 # BRAND
 
@@ -125,10 +159,6 @@ class BarChart(QWidget):
     Column chart drawn with QPainter. One series grows up from the baseline, an optional second
     series grows down from it (e.g. words added vs. removed). Hovering a column shows its tooltip.
     """
-    GRID_COLOR = "#EEF0F3"
-    BASELINE_COLOR = "#CBD5E1"
-    LABEL_COLOR = "#6B7280"
-    HOVER_COLOR = "#F3F4F6"
     MARGINS = (36, 10, 8, 26)  # left (y labels), top, right, bottom (x labels)
 
     def __init__(self, labels: list, tooltips: list, up_values: list, up_color: str,
@@ -190,14 +220,14 @@ class BarChart(QWidget):
 
         # hover wash behind the hovered column
         if self._hover is not None:
-            painter.fillRect(QRectF(plot.left() + self._hover * slot, plot.top(), slot, plot.height()), QColor(BarChart.HOVER_COLOR))
+            painter.fillRect(QRectF(plot.left() + self._hover * slot, plot.top(), slot, plot.height()), QColor(THEME["chart_hover"]))
 
         # gridlines and y labels (values below the baseline are labelled as positive counts)
         for value in range(-down_bottom, up_top + 1, step):
             y = baseline_y - value * scale
-            painter.setPen(QPen(QColor(BarChart.BASELINE_COLOR if value == 0 else BarChart.GRID_COLOR), 1))
+            painter.setPen(QPen(QColor(THEME["chart_baseline"] if value == 0 else THEME["chart_grid"]), 1))
             painter.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
-            painter.setPen(QColor(BarChart.LABEL_COLOR))
+            painter.setPen(QColor(THEME["chart_label"]))
             painter.drawText(QRectF(0, y - 8, plot.left() - 8, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(abs(value)))
 
         # bars: at most 24px wide, always leaving a gap between neighbours
@@ -214,7 +244,7 @@ class BarChart(QWidget):
                 painter.drawPath(BarChart._bar_path(x, baseline_y + gap, bar_width, down * scale - gap, upwards=False))
 
         # x labels: only every n-th label, so that they never collide
-        painter.setPen(QColor(BarChart.LABEL_COLOR))
+        painter.setPen(QColor(THEME["chart_label"]))
         label_width = max((metrics.horizontalAdvance(label) for label in self._labels), default=0) + 14
         every = max(1, math.ceil(label_width / slot))
         for i in range(0, len(self._labels), every):
@@ -663,6 +693,11 @@ class Data:
             mode        TEXT,               -- training mode (DG, GD, RA, AI) for 'trained'
             points      INTEGER             -- slider value for 'trained'
         )''')
+        # user preferences as key/value pairs (e.g. 'theme')
+        conn.execute('''CREATE TABLE IF NOT EXISTS settings (
+            key         TEXT PRIMARY KEY,
+            value       TEXT NOT NULL
+        )''')
         conn.commit()
         conn.close()
 
@@ -823,6 +858,19 @@ class Data:
         conn.commit()
         conn.close()
 
+    def load_setting(key: str, default: str) -> str:
+        """Return a stored user preference, or the default if it was never saved."""
+        conn = sqlite3.connect(config.DB_FILE)
+        row = conn.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
+        conn.close()
+        return row[0] if row else default
+
+    def save_setting(key: str, value: str) -> None:
+        conn = sqlite3.connect(config.DB_FILE)
+        conn.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)', (key, value))
+        conn.commit()
+        conn.close()
+
     def load_activity(since: datetime.date) -> list:
         """Return all logged events since the given date as (datetime, event, points) tuples, oldest first."""
         conn = sqlite3.connect(config.DB_FILE)
@@ -849,46 +897,47 @@ class Data:
 
 class GUI:
     """A class to handle the user interface with pyqt"""
+    # $tokens are filled from the active theme palette (see THEMES) in apply_theme()
     STYLESHEET = """
         * {
             font-family: "Segoe UI", Arial, sans-serif;
         }
         QMainWindow, QDialog, QMessageBox {
-            background-color: #F4F6FB;
+            background-color: $bg;
         }
         QLabel {
-            color: #1F2937;
+            color: $text;
             background-color: transparent;
         }
         QLabel#pageTitle {
-            color: #111827;
+            color: $text_strong;
             font-size: 30px;
             font-weight: 300;
         }
         QLabel#pageSubtitle {
-            color: #6B7280;
+            color: $text_subtle;
             font-size: 15px;
         }
         QLabel#fieldLabel {
-            color: #4B5563;
+            color: $text_muted;
             font-size: 13px;
             font-weight: 600;
         }
         QLabel#hint {
-            color: #6B7280;
+            color: $text_subtle;
             font-size: 13px;
         }
         QLabel#ratingValue {
-            color: #4F46E5;
+            color: $accent_text;
             font-size: 22px;
             font-weight: 600;
         }
         QLabel#card, QLabel#sentenceCard, QLabel#info {
-            background-color: #FFFFFF;
-            border: 1px solid #E3E8EF;
+            background-color: $surface;
+            border: 1px solid $border;
             border-radius: 14px;
             padding: 24px;
-            color: #111827;
+            color: $text_strong;
         }
         QLabel#card {
             font-size: 30px;
@@ -896,21 +945,21 @@ class GUI:
         }
         QLabel#sentenceCard {
             font-size: 21px;
-            color: #374151;
+            color: $text_body;
         }
         QLabel#info {
             font-size: 20px;
-            color: #4B5563;
+            color: $text_muted;
         }
         QFrame#panel {
-            background-color: #FFFFFF;
-            border: 1px solid #E3E8EF;
+            background-color: $surface;
+            border: 1px solid $border;
             border-radius: 14px;
         }
 
         /* Buttons: primary by default, variants via the "variant" property */
         QPushButton {
-            background-color: #4F46E5;
+            background-color: $accent;
             color: #FFFFFF;
             border: none;
             border-radius: 10px;
@@ -919,136 +968,137 @@ class GUI:
             font-weight: 600;
         }
         QPushButton:hover {
-            background-color: #4338CA;
+            background-color: $accent_hover;
         }
         QPushButton:pressed {
-            background-color: #3730A3;
+            background-color: $accent_pressed;
         }
         QPushButton:focus {
             outline: none;
         }
         QPushButton[variant="secondary"] {
-            background-color: #FFFFFF;
-            color: #374151;
-            border: 1px solid #D1D5DB;
+            background-color: $surface;
+            color: $text_body;
+            border: 1px solid $border_strong;
         }
         QPushButton[variant="secondary"]:hover {
-            background-color: #F3F4F6;
-            border-color: #9CA3AF;
+            background-color: $hover;
+            border-color: $border_hover;
         }
         QPushButton[variant="secondary"]:pressed {
-            background-color: #E5E7EB;
+            background-color: $pressed;
         }
         QPushButton[variant="danger"] {
-            background-color: #FFFFFF;
-            color: #DC2626;
-            border: 1px solid #FCA5A5;
+            background-color: $surface;
+            color: $danger;
+            border: 1px solid $danger_border;
         }
         QPushButton[variant="danger"]:hover {
-            background-color: #FEF2F2;
-            border-color: #DC2626;
+            background-color: $danger_hover;
+            border-color: $danger;
         }
         QPushButton[variant="danger"]:pressed {
-            background-color: #FEE2E2;
+            background-color: $danger_pressed;
         }
 
         QFrame#segmentBar {
-            background-color: #E9ECF2;
+            background-color: $segment_bg;
             border-radius: 10px;
         }
         QPushButton[variant="segment"] {
             background-color: transparent;
-            color: #4B5563;
+            color: $text_muted;
             border: 1px solid transparent;
             border-radius: 8px;
             padding: 4px 16px;
             font-size: 14px;
         }
         QPushButton[variant="segment"]:hover {
-            background-color: #DDE1E8;
+            background-color: $segment_hover;
         }
         QPushButton[variant="segment"]:checked {
-            background-color: #FFFFFF;
-            color: #111827;
-            border: 1px solid #D1D5DB;
+            background-color: $segment_checked;
+            color: $text_strong;
+            border: 1px solid $border_strong;
         }
         QLabel#tileValue {
-            color: #111827;
+            color: $text_strong;
             font-size: 28px;
             font-weight: 600;
         }
         QLabel#chartTitle {
-            color: #111827;
+            color: $text_strong;
             font-size: 15px;
             font-weight: 600;
         }
 
         QSlider::groove:horizontal {
             height: 8px;
-            background: #E5E7EB;
+            background: $pressed;
             border-radius: 4px;
         }
         QSlider::sub-page:horizontal {
-            background: #6366F1;
+            background: $accent_soft;
             border-radius: 4px;
         }
         QSlider::handle:horizontal {
-            background: #FFFFFF;
-            border: 3px solid #4F46E5;
+            background: $surface;
+            border: 3px solid $accent;
             width: 18px;
             height: 18px;
             margin: -8px 0;
             border-radius: 12px;
         }
         QSlider::handle:horizontal:hover {
-            background: #EEF2FF;
+            background: $accent_wash;
         }
 
         QComboBox, QLineEdit {
-            background-color: #FFFFFF;
-            color: #1F2937;
-            border: 1px solid #D1D5DB;
+            background-color: $surface;
+            color: $text;
+            border: 1px solid $border_strong;
             border-radius: 8px;
             padding: 8px 12px;
             font-size: 15px;
-            selection-background-color: #C7D2FE;
-            selection-color: #1F2937;
+            selection-background-color: $accent_text_select;
+            selection-color: $text;
         }
         QComboBox:hover, QLineEdit:hover {
-            border-color: #9CA3AF;
+            border-color: $border_hover;
         }
         QComboBox:focus, QLineEdit:focus {
-            border: 1px solid #6366F1;
+            border: 1px solid $accent_soft;
         }
         QComboBox::drop-down {
             border: none;
             width: 32px;
         }
         QComboBox::down-arrow {
-            image: url("{CHEVRON_DOWN}");
+            image: url("$chevron");
             width: 12px;
             height: 8px;
             margin-right: 12px;
         }
         QComboBox QAbstractItemView {
-            background-color: #FFFFFF;
-            border: 1px solid #E3E8EF;
-            selection-background-color: #EEF2FF;
-            selection-color: #1F2937;
+            background-color: $surface;
+            color: $text;
+            border: 1px solid $border;
+            selection-background-color: $accent_wash;
+            selection-color: $text;
             outline: none;
             padding: 4px;
         }
 
         /* Tables (QTableView and QTableWidget) */
         QTableView {
-            background-color: #FFFFFF;
-            alternate-background-color: #F9FAFB;
-            border: 1px solid #E3E8EF;
+            background-color: $surface;
+            alternate-background-color: $surface_alt;
+            border: 1px solid $border;
             border-radius: 12px;
             gridline-color: transparent;
-            selection-background-color: #E0E7FF;
-            selection-color: #111827;
-            color: #1F2937;
+            selection-background-color: $accent_select;
+            selection-color: $text_strong;
+            color: $text;
             font-size: 14px;
             outline: none;
         }
@@ -1057,30 +1107,30 @@ class GUI:
             border: none;
         }
         QTableView::item:hover {
-            background-color: #F3F4F6;
+            background-color: $hover;
         }
         QTableView::item:selected {
-            background-color: #E0E7FF;
-            color: #111827;
+            background-color: $accent_select;
+            color: $text_strong;
         }
         QHeaderView {
             background-color: transparent;
         }
         QHeaderView::section {
-            background-color: #F9FAFB;
-            color: #4B5563;
+            background-color: $surface_alt;
+            color: $text_muted;
             font-weight: 600;
             font-size: 13px;
             border: none;
-            border-bottom: 1px solid #E3E8EF;
+            border-bottom: 1px solid $border;
             padding: 10px 12px;
         }
         QHeaderView::section:hover {
-            background-color: #EEF2FF;
-            color: #1F2937;
+            background-color: $accent_wash;
+            color: $text;
         }
         QTableCornerButton::section {
-            background-color: #F9FAFB;
+            background-color: $surface_alt;
             border: none;
         }
 
@@ -1090,7 +1140,7 @@ class GUI:
             margin: 4px 2px;
         }
         QScrollBar::handle:vertical {
-            background: #CBD5E1;
+            background: $scroll;
             border-radius: 4px;
             min-height: 32px;
         }
@@ -1100,12 +1150,12 @@ class GUI:
             margin: 2px 4px;
         }
         QScrollBar::handle:horizontal {
-            background: #CBD5E1;
+            background: $scroll;
             border-radius: 4px;
             min-width: 32px;
         }
         QScrollBar::handle:hover {
-            background: #94A3B8;
+            background: $scroll_hover;
         }
         QScrollBar::add-line, QScrollBar::sub-line,
         QScrollBar::add-page, QScrollBar::sub-page {
@@ -1116,8 +1166,8 @@ class GUI:
         }
 
         QToolTip {
-            background-color: #111827;
-            color: #F9FAFB;
+            background-color: $tooltip_bg;
+            color: $tooltip_text;
             border: none;
             padding: 6px 8px;
             font-size: 13px;
@@ -1133,13 +1183,27 @@ class GUI:
         mixer.init()
 
         self.app = QApplication([])
-        # absolute path, because the working directory changes during runtime (os.chdir)
-        chevron_path = os.path.join(config.MAIN_PATH, config.FILES_PATH, "chevron_down.svg").replace("\\", "/")
-        self.app.setStyleSheet(GUI.STYLESHEET.replace("{CHEVRON_DOWN}", chevron_path))
+        self.apply_theme(Data.load_setting("theme", "light"))
         self.window = QMainWindow()
         self.start_main_menu()
         # animated brand intro on top of the main menu; fades out by itself
         self.splash = SplashOverlay(self.window)
+
+    def apply_theme(self, name: str) -> None:
+        """Switch the active palette ("light" or "dark") and re-apply the stylesheet; rebuild the screen afterwards."""
+        THEME.clear()
+        THEME.update(THEMES.get(name, THEMES["light"]))
+        # native parts (title bar, context menus) follow Qt's color scheme
+        self.app.styleHints().setColorScheme(Qt.ColorScheme.Dark if name == "dark" else Qt.ColorScheme.Light)
+        # absolute path, because the working directory changes during runtime (os.chdir)
+        chevron_path = os.path.join(config.MAIN_PATH, config.FILES_PATH, THEME["chevron"]).replace("\\", "/")
+        self.app.setStyleSheet(string.Template(GUI.STYLESHEET).substitute(THEME, chevron=chevron_path))
+
+    def toggle_theme(self) -> None:
+        theme = "light" if THEME == THEMES["dark"] else "dark"
+        Data.save_setting("theme", theme)
+        self.apply_theme(theme)
+        self.start_main_menu()
 
     # LAYOUT HELPERS
 
@@ -1260,7 +1324,7 @@ class GUI:
         """Set up the main menu as part of the GUI."""
         layout = self._new_page()
 
-        layout.addLayout(GUI._title_block(f'{APP_NAME[:4]}<span style="font-weight:600; color:#4F46E5;">{APP_NAME[4:]}</span>', 'Dutch ↔ German vocabulary trainer'))
+        layout.addLayout(GUI._title_block(f'{APP_NAME[:4]}<span style="font-weight:600; color:{THEME["accent_text"]};">{APP_NAME[4:]}</span>', 'Dutch ↔ German vocabulary trainer'))
         layout.addSpacing(30)
 
         button_width = 300
@@ -1268,17 +1332,20 @@ class GUI:
         self.start_training_button = GUI._button('Start Training', width=button_width)
         self.explore_statistics_button = GUI._button('Explore Statistics', width=button_width)
         self.manage_vocabulary_button = GUI._button('Manage Vocabulary', width=button_width)
+        self.theme_button = GUI._button('☀  Light Mode' if THEME == THEMES["dark"] else '☾  Dark Mode', "secondary", width=button_width)
         self.exit_button = GUI._button('Exit', "secondary", width=button_width)
 
         layout.addWidget(self.start_training_button)
         layout.addWidget(self.explore_statistics_button)
         layout.addWidget(self.manage_vocabulary_button)
         layout.addSpacing(12)
+        layout.addWidget(self.theme_button)
         layout.addWidget(self.exit_button)
 
         self.start_training_button.clicked.connect(self.select_training_type)
         self.explore_statistics_button.clicked.connect(self.explore_statistics)
         self.manage_vocabulary_button.clicked.connect(self.manage_vocabulary)
+        self.theme_button.clicked.connect(self.toggle_theme)
         self.exit_button.clicked.connect(QApplication.instance().quit)
 
         self.window.setWindowTitle(APP_NAME)
@@ -1841,21 +1908,21 @@ class GUI:
         for period, count, points in zip(periods, data["trained"], data["average_points"]):
             tooltip = f"{period}\n{count} word{'' if count == 1 else 's'} trained"
             trained_tooltips.append(tooltip + (f" · avg score {points:.0f}" if points is not None else ""))
-        trained_chart = BarChart(labels, trained_tooltips, data["trained"], CHART_BLUE, empty_text="No training in this period")
+        trained_chart = BarChart(labels, trained_tooltips, data["trained"], THEME["chart_blue"], empty_text="No training in this period")
         layout.addWidget(GUI._chart_panel(
             "Words trained", f"Answers per {'week' if weekly else 'day'} · hover a column for details", trained_chart), 3)
 
         # vocabulary added / removed and time of day, side by side
         vocab_tooltips = [f"{period}\n+{a} added · −{r} removed" for period, a, r in zip(periods, data["added"], data["removed"])]
-        vocab_chart = BarChart(labels, vocab_tooltips, data["added"], CHART_BLUE, data["removed"], CHART_RED,
+        vocab_chart = BarChart(labels, vocab_tooltips, data["added"], THEME["chart_blue"], data["removed"], THEME["chart_red"],
                                empty_text="No words added or removed in this period")
         hour_tooltips = [f"{h:02d}:00–{(h + 1) % 24:02d}:00\n{n} word{'' if n == 1 else 's'} trained" for h, n in enumerate(data["hours"])]
-        hour_chart = BarChart([str(h) for h in range(24)], hour_tooltips, data["hours"], CHART_BLUE, empty_text="No training in this period")
+        hour_chart = BarChart([str(h) for h in range(24)], hour_tooltips, data["hours"], THEME["chart_blue"], empty_text="No training in this period")
         row = QHBoxLayout()
         row.setSpacing(14)
         row.addWidget(GUI._chart_panel(
             "Vocabulary changes", f"Words added and removed per {'week' if weekly else 'day'}", vocab_chart,
-            legend=[("Added", CHART_BLUE), ("Removed", CHART_RED)]), 1)
+            legend=[("Added", THEME["chart_blue"]), ("Removed", THEME["chart_red"])]), 1)
         row.addWidget(GUI._chart_panel("Time of day", "Answers per hour of the day", hour_chart), 1)
         layout.addLayout(row, 2)
 
