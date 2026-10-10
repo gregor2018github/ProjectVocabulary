@@ -3,6 +3,7 @@
 
 import datetime
 import json
+import math
 import numbers
 import os
 import sqlite3
@@ -12,9 +13,9 @@ import random
 import sys
 import time
 from pygame import mixer
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QSlider, QTableView, QTableWidget, QTableWidgetItem, QLineEdit, QComboBox, QMessageBox, QHeaderView, QAbstractItemView, QFrame, QGridLayout
-from PyQt6.QtGui import QFont, QColor
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QCoreApplication, QSortFilterProxyModel
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QSlider, QTableView, QTableWidget, QTableWidgetItem, QLineEdit, QComboBox, QMessageBox, QHeaderView, QAbstractItemView, QFrame, QGridLayout, QStackedWidget, QButtonGroup, QToolTip
+from PyQt6.QtGui import QFont, QColor, QPainter, QPainterPath, QPen, QFontMetrics
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QCoreApplication, QSortFilterProxyModel, QRectF
 import openpyxl
 
 # MODULE IMPORTS
@@ -30,6 +31,10 @@ def score_color(points: float) -> str:
     if points < 40:
         return "#B91C1C"
     return "#B45309"
+
+# chart colors (validated for CVD separation and >= 3:1 contrast on the white chart panels)
+CHART_BLUE = "#2A78D6"   # single series / words added
+CHART_RED = "#E34948"    # words removed
 
 # CLASSES
 
@@ -109,6 +114,132 @@ class Table(QAbstractTableModel):
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         return Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+
+class BarChart(QWidget):
+    """
+    Column chart drawn with QPainter. One series grows up from the baseline, an optional second
+    series grows down from it (e.g. words added vs. removed). Hovering a column shows its tooltip.
+    """
+    GRID_COLOR = "#EEF0F3"
+    BASELINE_COLOR = "#CBD5E1"
+    LABEL_COLOR = "#6B7280"
+    HOVER_COLOR = "#F3F4F6"
+    MARGINS = (36, 10, 8, 26)  # left (y labels), top, right, bottom (x labels)
+
+    def __init__(self, labels: list, tooltips: list, up_values: list, up_color: str,
+                 down_values: list | None = None, down_color: str = "", empty_text: str = "No data in this period") -> None:
+        super().__init__()
+        self._labels = labels
+        self._tooltips = tooltips
+        self._up = up_values
+        self._down = down_values or [0] * len(up_values)
+        self._up_color = QColor(up_color)
+        self._down_color = QColor(down_color or up_color)
+        self._empty_text = empty_text
+        self._hover = None
+        self.setMouseTracking(True)
+        self.setMinimumHeight(170)
+
+    @staticmethod
+    def _nice_step(max_value: float, ticks: int = 4) -> int:
+        """Return a 1/2/5 * 10^n step that splits max_value into about `ticks` gridlines."""
+        raw = max(max_value / ticks, 1)
+        magnitude = 10 ** math.floor(math.log10(raw))
+        for multiple in (1, 2, 5, 10):
+            if raw <= multiple * magnitude:
+                return int(multiple * magnitude)
+        return int(10 * magnitude)
+
+    def _layout(self) -> tuple:
+        left, top, right, bottom = BarChart.MARGINS
+        plot = QRectF(left, top, self.width() - left - right, self.height() - top - bottom)
+        up_max, down_max = max(self._up, default=0), max(self._down, default=0)
+        step = BarChart._nice_step(max(up_max, down_max))
+        up_top = math.ceil(up_max / step) * step or step
+        down_bottom = math.ceil(down_max / step) * step
+        scale = plot.height() / (up_top + down_bottom)
+        baseline_y = plot.top() + up_top * scale
+        slot = plot.width() / max(len(self._labels), 1)
+        return plot, baseline_y, scale, slot, step, up_top, down_bottom
+
+    @staticmethod
+    def _bar_path(x: float, baseline_y: float, width: float, height: float, upwards: bool) -> QPainterPath:
+        """A bar with a 4px rounded data end and a square end at the baseline."""
+        radius = min(4.0, width / 2, height)
+        top = baseline_y - height if upwards else baseline_y
+        path = QPainterPath()
+        path.setFillRule(Qt.FillRule.WindingFill)
+        path.addRoundedRect(QRectF(x, top, width, height), radius, radius)
+        square_top = baseline_y - radius if upwards else baseline_y
+        path.addRect(QRectF(x, square_top, width, radius))
+        return path
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        plot, baseline_y, scale, slot, step, up_top, down_bottom = self._layout()
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+
+        # hover wash behind the hovered column
+        if self._hover is not None:
+            painter.fillRect(QRectF(plot.left() + self._hover * slot, plot.top(), slot, plot.height()), QColor(BarChart.HOVER_COLOR))
+
+        # gridlines and y labels (values below the baseline are labelled as positive counts)
+        for value in range(-down_bottom, up_top + 1, step):
+            y = baseline_y - value * scale
+            painter.setPen(QPen(QColor(BarChart.BASELINE_COLOR if value == 0 else BarChart.GRID_COLOR), 1))
+            painter.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
+            painter.setPen(QColor(BarChart.LABEL_COLOR))
+            painter.drawText(QRectF(0, y - 8, plot.left() - 8, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(abs(value)))
+
+        # bars: at most 24px wide, always leaving a gap between neighbours
+        bar_width = max(1.0, min(24.0, slot * 0.7, slot - 2))
+        painter.setPen(Qt.PenStyle.NoPen)
+        for i, (up, down) in enumerate(zip(self._up, self._down)):
+            x = plot.left() + i * slot + (slot - bar_width) / 2
+            gap = 1 if up > 0 and down > 0 else 0  # keep a 2px gap where both series meet
+            if up > 0:
+                painter.setBrush(self._up_color)
+                painter.drawPath(BarChart._bar_path(x, baseline_y - gap, bar_width, up * scale - gap, upwards=True))
+            if down > 0:
+                painter.setBrush(self._down_color)
+                painter.drawPath(BarChart._bar_path(x, baseline_y + gap, bar_width, down * scale - gap, upwards=False))
+
+        # x labels: only every n-th label, so that they never collide
+        painter.setPen(QColor(BarChart.LABEL_COLOR))
+        label_width = max((metrics.horizontalAdvance(label) for label in self._labels), default=0) + 14
+        every = max(1, math.ceil(label_width / slot))
+        for i in range(0, len(self._labels), every):
+            center = plot.left() + (i + 0.5) * slot
+            painter.drawText(QRectF(center - label_width / 2, plot.bottom() + 6, label_width, 16), Qt.AlignmentFlag.AlignCenter, self._labels[i])
+
+        if not any(self._up) and not any(self._down):
+            font.setPixelSize(13)
+            painter.setFont(font)
+            painter.drawText(plot, Qt.AlignmentFlag.AlignCenter, self._empty_text)
+        painter.end()
+
+    def mouseMoveEvent(self, event) -> None:
+        plot, _, _, slot, *_ = self._layout()
+        position = event.position()
+        hover = int((position.x() - plot.left()) // slot) if plot.contains(position) else None
+        if hover is not None and not 0 <= hover < len(self._labels):
+            hover = None
+        if hover != self._hover:
+            self._hover = hover
+            self.update()
+            if hover is None:
+                QToolTip.hideText()
+            else:
+                QToolTip.showText(event.globalPosition().toPoint(), self._tooltips[hover], self)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = None
+        QToolTip.hideText()
+        self.update()
 
 class Data:
     """A class to handle (load, save, manipulate) the data of the vocabulary"""
@@ -317,6 +448,15 @@ class Data:
             g_d_points  TEXT    DEFAULT '[]',
             last_asked  TEXT    DEFAULT 'never'
         )''')
+        # one row per event; only filled from the moment tracking exists (no backfill of older data)
+        conn.execute('''CREATE TABLE IF NOT EXISTS activity_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp   TEXT    NOT NULL,   -- local time, 'YYYY-MM-DD HH:MM:SS'
+            event       TEXT    NOT NULL,   -- 'app_start' | 'trained' | 'added' | 'deleted'
+            vocab_id    INTEGER,
+            mode        TEXT,               -- training mode (DG, GD, RA, AI) for 'trained'
+            points      INTEGER             -- slider value for 'trained'
+        )''')
         conn.commit()
         conn.close()
 
@@ -419,6 +559,7 @@ class Data:
         new_id = cursor.lastrowid
         conn.commit()
         conn.close()
+        Data.log_activity("added", new_id)
         Data.id_list.append(new_id)
         Data.dutch_voc_list.append(dutch)
         Data.german_voc_list.append(german)
@@ -438,6 +579,7 @@ class Data:
         conn.execute('DELETE FROM vocabulary WHERE id=?', (db_id,))
         conn.commit()
         conn.close()
+        Data.log_activity("deleted", db_id)
         idx = Data.id_list.index(db_id)
         Data.id_list.pop(idx)
         Data.dutch_voc_list.pop(idx)
@@ -464,6 +606,40 @@ class Data:
         Data.dutch_voc_list[idx] = dutch
         Data.german_voc_list[idx] = german
         Data.phonetics_list[idx] = note
+
+    def log_activity(event: str, vocab_id: int | None = None, mode: str | None = None, points: int | None = None) -> None:
+        """Append an event ('app_start', 'trained', 'added', 'deleted') to the activity log."""
+        conn = sqlite3.connect(config.DB_FILE)
+        conn.execute(
+            'INSERT INTO activity_log (timestamp, event, vocab_id, mode, points) VALUES (?,?,?,?,?)',
+            (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), event, vocab_id, mode, points)
+        )
+        conn.commit()
+        conn.close()
+
+    def load_activity(since: datetime.date) -> list:
+        """Return all logged events since the given date as (datetime, event, points) tuples, oldest first."""
+        conn = sqlite3.connect(config.DB_FILE)
+        rows = conn.execute(
+            'SELECT timestamp, event, points FROM activity_log WHERE timestamp >= ? ORDER BY timestamp',
+            (since.isoformat(),)
+        ).fetchall()
+        conn.close()
+        return [(datetime.datetime.strptime(ts, "%Y-%m-%d %H:%M:%S"), event, points) for ts, event, points in rows]
+
+    def load_training_days() -> set:
+        """Return the set of all dates on which at least one word was trained."""
+        conn = sqlite3.connect(config.DB_FILE)
+        rows = conn.execute("SELECT DISTINCT substr(timestamp, 1, 10) FROM activity_log WHERE event = 'trained'").fetchall()
+        conn.close()
+        return {datetime.date.fromisoformat(row[0]) for row in rows}
+
+    def first_activity_date() -> datetime.date | None:
+        """Return the date tracking started (first logged event), or None if nothing was logged yet."""
+        conn = sqlite3.connect(config.DB_FILE)
+        row = conn.execute('SELECT MIN(timestamp) FROM activity_log').fetchone()
+        conn.close()
+        return datetime.date.fromisoformat(row[0][:10]) if row[0] else None
 
 class GUI:
     """A class to handle the user interface with pyqt"""
@@ -568,6 +744,37 @@ class GUI:
         }
         QPushButton[variant="danger"]:pressed {
             background-color: #FEE2E2;
+        }
+
+        QFrame#segmentBar {
+            background-color: #E9ECF2;
+            border-radius: 10px;
+        }
+        QPushButton[variant="segment"] {
+            background-color: transparent;
+            color: #4B5563;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            padding: 4px 16px;
+            font-size: 14px;
+        }
+        QPushButton[variant="segment"]:hover {
+            background-color: #DDE1E8;
+        }
+        QPushButton[variant="segment"]:checked {
+            background-color: #FFFFFF;
+            color: #111827;
+            border: 1px solid #D1D5DB;
+        }
+        QLabel#tileValue {
+            color: #111827;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        QLabel#chartTitle {
+            color: #111827;
+            font-size: 15px;
+            font-weight: 600;
         }
 
         QSlider::groove:horizontal {
@@ -947,6 +1154,7 @@ class GUI:
 
             # save statistics
             Data.save_row_sqlite(vocab_nr)
+            Data.log_activity("trained", Data.id_list[vocab_nr], logic.modus, self.slider.value())
             # ask for a new vocab
             GUI.start_dutch_german(self)
 
@@ -1020,6 +1228,7 @@ class GUI:
 
             # save statistics
             Data.save_row_sqlite(vocab_nr)
+            Data.log_activity("trained", Data.id_list[vocab_nr], logic.modus, self.slider.value())
             # ask for a new vocab
             GUI.start_german_dutch(self)
 
@@ -1105,6 +1314,7 @@ class GUI:
 
             # save statistics
             Data.save_row_sqlite(vocab_nr)
+            Data.log_activity("trained", Data.id_list[vocab_nr], logic.modus, self.slider.value())
             # ask for a new vocab
             GUI.start_random(self)
 
@@ -1196,6 +1406,7 @@ class GUI:
 
             # save statistics
             Data.save_row_sqlite(vocab_nr)
+            Data.log_activity("trained", Data.id_list[vocab_nr], logic.modus, self.slider.value())
             # ask for a new vocab
             GUI.start_ai_sentences(self)
 
@@ -1328,27 +1539,153 @@ class GUI:
         elif index == 3:
             logic.sentence_style_ai = "offensive"
 
+    @staticmethod
+    def _segmented(options: list, checked: int = 0) -> tuple:
+        """Create a segmented control (exclusive buttons in a pill); returns (frame, button group with ids = option index)."""
+        bar = QFrame()
+        bar.setObjectName("segmentBar")
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(3, 3, 3, 3)
+        row.setSpacing(2)
+        group = QButtonGroup(bar)
+        for i, text in enumerate(options):
+            button = GUI._button(text, "segment", height=34)
+            button.setCheckable(True)
+            button.setChecked(i == checked)
+            group.addButton(button, i)
+            row.addWidget(button)
+        return bar, group
+
+    @staticmethod
+    def _stat_tile(label: str, value: str, note: str) -> QFrame:
+        tile = QFrame()
+        tile.setObjectName("panel")
+        tile_layout = QVBoxLayout(tile)
+        tile_layout.setContentsMargins(18, 14, 18, 14)
+        tile_layout.setSpacing(2)
+        value_label = QLabel(value)
+        value_label.setObjectName("tileValue")
+        tile_layout.addWidget(GUI._hint(label))
+        tile_layout.addWidget(value_label)
+        tile_layout.addWidget(GUI._hint(note))
+        return tile
+
+    @staticmethod
+    def _chart_panel(title: str, subtitle: str, chart: QWidget, legend: list | None = None) -> QFrame:
+        """Wrap a chart in a panel with a title, a subtitle and an optional legend of (text, color) pairs."""
+        panel = QFrame()
+        panel.setObjectName("panel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(18, 14, 18, 10)
+        panel_layout.setSpacing(2)
+        header = QHBoxLayout()
+        title_label = QLabel(title)
+        title_label.setObjectName("chartTitle")
+        header.addWidget(title_label)
+        header.addStretch()
+        for text, color in legend or []:
+            entry = GUI._hint(f'<span style="color:{color}; font-size:15px;">■</span>&nbsp;{text}')
+            entry.setTextFormat(Qt.TextFormat.RichText)
+            header.addSpacing(12)
+            header.addWidget(entry)
+        panel_layout.addLayout(header)
+        panel_layout.addWidget(GUI._hint(subtitle))
+        panel_layout.addSpacing(6)
+        panel_layout.addWidget(chart, 1)
+        return panel
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        minutes = round(seconds / 60)
+        if minutes < 60:
+            return f"{minutes} min"
+        return f"{minutes // 60} h {minutes % 60} min"
+
+    def _activity_view(self, days: int) -> QWidget:
+        """Build the activity dashboard (tiles + charts) for the last `days` days."""
+        data = Logic.create_activity_data(days)
+        view = QWidget()
+        layout = QVBoxLayout(view)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        # stat tiles
+        trained_total = sum(data["trained"])
+        average = f"avg score {data['total_points'] / trained_total:.0f}" if trained_total else "no answers yet"
+        streak = data["streak"]
+        tiles = QHBoxLayout()
+        tiles.setSpacing(14)
+        for tile in (
+            GUI._stat_tile("Words trained", str(trained_total), average),
+            GUI._stat_tile("Days active", str(data["active_days"]), f"of the last {days} days"),
+            GUI._stat_tile("Time practised", GUI._format_duration(data["practice_seconds"]), "estimated from answer times"),
+            GUI._stat_tile("Current streak", f"{streak} day{'' if streak == 1 else 's'}", "days in a row with training"),
+            GUI._stat_tile("Vocabulary changes", f"+{sum(data['added'])}  −{sum(data['removed'])}", f"{len(Data.dutch_voc_list)} words in total"),
+        ):
+            tiles.addWidget(tile, 1)
+        layout.addLayout(tiles)
+
+        # words trained per day / week
+        weekly = data["weekly"]
+        labels = [f"{bucket.day} {bucket:%b}" for bucket in data["buckets"]]
+        periods = [("Week of " if weekly else "") + f"{bucket:%a %d %b %Y}" for bucket in data["buckets"]]
+        trained_tooltips = []
+        for period, count, points in zip(periods, data["trained"], data["average_points"]):
+            tooltip = f"{period}\n{count} word{'' if count == 1 else 's'} trained"
+            trained_tooltips.append(tooltip + (f" · avg score {points:.0f}" if points is not None else ""))
+        trained_chart = BarChart(labels, trained_tooltips, data["trained"], CHART_BLUE, empty_text="No training in this period")
+        layout.addWidget(GUI._chart_panel(
+            "Words trained", f"Answers per {'week' if weekly else 'day'} · hover a column for details", trained_chart), 3)
+
+        # vocabulary added / removed and time of day, side by side
+        vocab_tooltips = [f"{period}\n+{a} added · −{r} removed" for period, a, r in zip(periods, data["added"], data["removed"])]
+        vocab_chart = BarChart(labels, vocab_tooltips, data["added"], CHART_BLUE, data["removed"], CHART_RED,
+                               empty_text="No words added or removed in this period")
+        hour_tooltips = [f"{h:02d}:00–{(h + 1) % 24:02d}:00\n{n} word{'' if n == 1 else 's'} trained" for h, n in enumerate(data["hours"])]
+        hour_chart = BarChart([str(h) for h in range(24)], hour_tooltips, data["hours"], CHART_BLUE, empty_text="No training in this period")
+        row = QHBoxLayout()
+        row.setSpacing(14)
+        row.addWidget(GUI._chart_panel(
+            "Vocabulary changes", f"Words added and removed per {'week' if weekly else 'day'}", vocab_chart,
+            legend=[("Added", CHART_BLUE), ("Removed", CHART_RED)]), 1)
+        row.addWidget(GUI._chart_panel("Time of day", "Answers per hour of the day", hour_chart), 1)
+        layout.addLayout(row, 2)
+
+        if data["tracking_since"]:
+            layout.addWidget(GUI._hint(f"Activity is recorded since {data['tracking_since']:%d %b %Y}; training before that date is not included."))
+        return view
+
     def explore_statistics(self) -> None:
-        """Set up the statistics screen as part of the GUI."""
+        """Set up the statistics screen with an activity dashboard and the per-word table."""
         layout = self._new_page(centered=False)
 
-        # header: title on the left, search and back button on the right
-        table_data = Logic.create_statistics_data()
+        # header: title on the left, back button on the right
         header = QHBoxLayout()
-        header.addLayout(GUI._title_block('Statistics', f'{len(table_data)} words · click a column header to sort', centered=False))
+        header.addLayout(GUI._title_block('Statistics', 'How you use the program and how well you know each word', centered=False))
         header.addStretch()
+        button_back_to_main_menu = GUI._button('Main Menu', "secondary", height=42)
+        header.addWidget(button_back_to_main_menu, alignment=Qt.AlignmentFlag.AlignBottom)
+        layout.addLayout(header)
+        layout.addSpacing(4)
+
+        # toolbar: tabs on the left, range filter (activity) or search (words) on the right
+        range_days = [7, 30, 90, 365]
+        toolbar = QHBoxLayout()
+        tab_bar, tab_group = GUI._segmented(["Activity", "Words"])
+        range_bar, range_group = GUI._segmented(["7 days", "30 days", "90 days", "1 year"], checked=1)
         search_input = QLineEdit()
         search_input.setPlaceholderText("Search words…")
         search_input.setClearButtonEnabled(True)
-        search_input.setFixedSize(300, 42)
-        button_back_to_main_menu = GUI._button('Main Menu', "secondary", height=42)
-        header.addWidget(search_input, alignment=Qt.AlignmentFlag.AlignBottom)
-        header.addSpacing(8)
-        header.addWidget(button_back_to_main_menu, alignment=Qt.AlignmentFlag.AlignBottom)
-        layout.addLayout(header)
-        layout.addSpacing(6)
+        search_input.setFixedSize(300, 40)
+        toolbar.addWidget(tab_bar)
+        toolbar.addStretch()
+        toolbar.addWidget(range_bar)
+        toolbar.addWidget(search_input)
+        layout.addLayout(toolbar)
+        layout.addSpacing(4)
 
         # Create a pyqt table with that data; the proxy handles sorting and searching
+        table_data = Logic.create_statistics_data()
         table = QTableView()
         model = Table(
             table_data,
@@ -1381,8 +1718,27 @@ class GUI:
 
         table.setSortingEnabled(True)
         table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
-        layout.addWidget(table)
 
+        stack = QStackedWidget()
+        stack.addWidget(self._activity_view(range_days[1]))
+        stack.addWidget(table)
+        layout.addWidget(stack, 1)
+
+        def show_tab(index: int) -> None:
+            stack.setCurrentIndex(index)
+            range_bar.setVisible(index == 0)
+            search_input.setVisible(index == 1)
+
+        def show_range(index: int) -> None:
+            old_view = stack.widget(0)
+            stack.removeWidget(old_view)
+            old_view.deleteLater()
+            stack.insertWidget(0, self._activity_view(range_days[index]))
+            stack.setCurrentIndex(0)
+
+        show_tab(0)
+        tab_group.idClicked.connect(show_tab)
+        range_group.idClicked.connect(show_range)
         search_input.textChanged.connect(proxy.setFilterFixedString)
         button_back_to_main_menu.clicked.connect(self.start_main_menu)
 
@@ -2050,6 +2406,70 @@ class Logic:
 
         return table_data
 
+    def create_activity_data(days: int) -> dict:
+        """
+        Aggregate the activity log of the last `days` days for the activity charts.
+        Ranges longer than 90 days are bucketed by week (starting Monday) instead of by day.
+        """
+        today = datetime.date.today()
+        start = today - datetime.timedelta(days=days - 1)
+        weekly = days > 90
+
+        def bucket_of(day: datetime.date) -> datetime.date:
+            return day - datetime.timedelta(days=day.weekday()) if weekly else day
+
+        buckets = []
+        day = bucket_of(start)
+        while day <= today:
+            buckets.append(day)
+            day += datetime.timedelta(days=7 if weekly else 1)
+        index = {bucket: i for i, bucket in enumerate(buckets)}
+
+        trained, points_sum = [0] * len(buckets), [0] * len(buckets)
+        added, removed = [0] * len(buckets), [0] * len(buckets)
+        hours = [0] * 24
+        active_days = set()
+        trained_times = []
+        for timestamp, event, points in Data.load_activity(start):
+            i = index[bucket_of(timestamp.date())]
+            active_days.add(timestamp.date())
+            if event == "trained":
+                trained[i] += 1
+                points_sum[i] += points or 0
+                hours[timestamp.hour] += 1
+                trained_times.append(timestamp)
+            elif event == "added":
+                added[i] += 1
+            elif event == "deleted":
+                removed[i] += 1
+
+        # practice time: sum of the pauses between answers that are at most 5 minutes apart
+        gaps = ((b - a).total_seconds() for a, b in zip(trained_times, trained_times[1:]))
+        practice_seconds = sum(gap for gap in gaps if gap <= 300)
+
+        # streak: consecutive days with training, ending today (or yesterday if not trained yet today)
+        training_days = Data.load_training_days()
+        streak = 0
+        day = today if today in training_days else today - datetime.timedelta(days=1)
+        while day in training_days:
+            streak += 1
+            day -= datetime.timedelta(days=1)
+
+        return {
+            "buckets": buckets,
+            "weekly": weekly,
+            "trained": trained,
+            "average_points": [points_sum[i] / trained[i] if trained[i] else None for i in range(len(buckets))],
+            "added": added,
+            "removed": removed,
+            "hours": hours,
+            "active_days": len(active_days),
+            "practice_seconds": practice_seconds,
+            "streak": streak,
+            "total_points": sum(points_sum),
+            "tracking_since": Data.first_activity_date(),
+        }
+
 # MAIN
 
 def main():
@@ -2060,6 +2480,7 @@ def main():
 
     # add todays date to current_date
     Data.add_current_date()
+    Data.log_activity("app_start")
 
     # initialize the open ai client to generate AI sentences
     global aiapi

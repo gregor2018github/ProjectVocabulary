@@ -30,12 +30,14 @@ Everything lives in a single file: `app_main.py`. There are no tests. The app us
 - **`Logic`** — Training logic: word selection (weighted by correctness, frequency, recency), scoring, mode tracking (`DG`=Dutch-German, `GD`=German-Dutch, `RA`=random, `AI`=AI mode).
 - **`AiApi`** — OpenAI API wrapper for sentence generation (`gpt-4o-mini`) and text-to-speech (`tts-1`).
 - **`Table`** — `QAbstractTableModel` subclass for the statistics table view.
+- **`BarChart`** — QPainter column chart (no charting dependency) used by the Activity tab of the statistics screen.
 
 ### Data Flow
 
 1. Startup: `Logic.search_vocabulary_data()` tries JSON first, falls back to XLSX, or creates an example XLSX if neither exists.
 2. XLSX can be expanded by appending rows; `refresh_vocabulary_list()` merges new XLSX entries into existing JSON stats.
 3. Statistics are persisted to JSON after each training answer.
+4. Usage is recorded in the `activity_log` SQLite table via `Data.log_activity()` (events: `app_start`, `trained`, `added`, `deleted`). There is no backfill — data from before tracking existed is deliberately ignored. `Logic.create_activity_data()` aggregates it for the charts.
 
 ## Config
 
