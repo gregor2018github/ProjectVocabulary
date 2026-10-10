@@ -3,6 +3,7 @@
 
 import datetime
 import json
+import numbers
 import os
 import sqlite3
 from openai import OpenAI
@@ -11,22 +12,37 @@ import random
 import sys
 import time
 from pygame import mixer
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QSlider, QTableView, QTableWidget, QTableWidgetItem, QLineEdit, QComboBox, QMessageBox
-from PyQt6.QtGui import QFont
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QCoreApplication
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QSlider, QTableView, QTableWidget, QTableWidgetItem, QLineEdit, QComboBox, QMessageBox, QHeaderView, QAbstractItemView, QFrame, QGridLayout
+from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QCoreApplication, QSortFilterProxyModel
 import openpyxl
 
 # MODULE IMPORTS
 
 import config
 
+# HELPERS
+
+def score_color(points: float) -> str:
+    """Return the text color for a score, matching the thresholds for correct (> 60) and wrong (< 40)."""
+    if points > 60:
+        return "#15803D"
+    if points < 40:
+        return "#B91C1C"
+    return "#B45309"
+
 # CLASSES
 
 class Table(QAbstractTableModel):
     """A class to create a standard table model for the statistics table"""
-    def __init__(self, data: pd.DataFrame) -> None:
+    SORT_ROLE = Qt.ItemDataRole.UserRole
+
+    def __init__(self, data: pd.DataFrame, text_columns: tuple = (), score_columns: tuple = (), date_columns: tuple = ()) -> None:
         super().__init__()
         self._data = data
+        self._text_columns = {data.columns.get_loc(c) for c in text_columns}
+        self._score_columns = {data.columns.get_loc(c) for c in score_columns}
+        self._date_columns = {data.columns.get_loc(c) for c in date_columns}
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return len(self._data)
@@ -34,26 +50,62 @@ class Table(QAbstractTableModel):
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return len(self._data.columns)
 
-    def data(self, index: QModelIndex, role: Qt.ItemDataRole) -> str | None:
+    def _display(self, value, column: int) -> str:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return "—"
+        if column in self._date_columns:
+            return "never" if value == "never" else str(value).split(" ")[0]
+        if isinstance(value, float):
+            return f"{value:.0f}"
+        return str(value)
+
+    def _sort_key(self, value, column: int):
+        if column in self._date_columns:
+            for date_format in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y"):
+                try:
+                    return datetime.datetime.strptime(str(value), date_format).timestamp()
+                except ValueError:
+                    pass
+            return 0.0
+        if column in self._text_columns:
+            return str(value).lower()
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return -1.0
+        if isinstance(value, numbers.Real):
+            return float(value)
+        return str(value)
+
+    def data(self, index: QModelIndex, role: Qt.ItemDataRole):
+        value = self._data.iloc[index.row(), index.column()]
+        column = index.column()
         if role == Qt.ItemDataRole.DisplayRole:
-            return str(self._data.iloc[index.row(), index.column()])
+            return self._display(value, column)
+        if role == Qt.ItemDataRole.ToolTipRole and column in self._text_columns:
+            return str(value)
+        if role == Table.SORT_ROLE:
+            return self._sort_key(value, column)
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            if column in self._text_columns:
+                return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            return Qt.AlignmentFlag.AlignCenter
+        if role == Qt.ItemDataRole.ForegroundRole and column in self._score_columns and isinstance(value, numbers.Real) and not pd.isna(value):
+            return QColor(score_color(value))
+        if role == Qt.ItemDataRole.FontRole and column == 0:
+            font = QFont()
+            font.setWeight(QFont.Weight.DemiBold)
+            return font
         return None
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: Qt.ItemDataRole) -> str | None:
+        if orientation != Qt.Orientation.Horizontal:
+            return None
         if role == Qt.ItemDataRole.DisplayRole:
-            if orientation == Qt.Orientation.Horizontal:
-                return str(self._data.columns[section])
-            if orientation == Qt.Orientation.Vertical:
-                return str(self._data.index[section])
+            return str(self._data.columns[section])
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            if section in self._text_columns:
+                return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            return Qt.AlignmentFlag.AlignCenter
         return None
-
-    def sort(self, column: int, order: Qt.SortOrder) -> None:
-        self.layoutAboutToBeChanged.emit()
-        if order == Qt.SortOrder.AscendingOrder:
-            self._data = self._data.sort_values(by=self._data.columns[column], ascending=True)
-        else:
-            self._data = self._data.sort_values(by=self._data.columns[column], ascending=False)
-        self.layoutChanged.emit()
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         return Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
@@ -419,147 +471,247 @@ class GUI:
         * {
             font-family: "Segoe UI", Arial, sans-serif;
         }
-        QMainWindow {
-            background-color: #F5F6F8;
-        }
-        QWidget {
-            background-color: #F5F6F8;
-        }
-        QPushButton {
-            background-color: #2C3E50;
-            color: #FFFFFF;
-            border: none;
-            border-radius: 6px;
-            padding: 12px 24px;
-            font-size: 15px;
-            font-weight: 500;
-        }
-        QPushButton:hover {
-            background-color: #34495E;
-        }
-        QPushButton:pressed {
-            background-color: #1A252F;
+        QMainWindow, QDialog, QMessageBox {
+            background-color: #F4F6FB;
         }
         QLabel {
-            color: #2C3E50;
+            color: #1F2937;
             background-color: transparent;
         }
-        QLabel#card {
-            background-color: #FFFFFF;
-            border: 1px solid #E0E4E8;
-            border-radius: 10px;
-            padding: 20px;
+        QLabel#pageTitle {
+            color: #111827;
+            font-size: 30px;
+            font-weight: 300;
         }
-        QLabel#info {
-            background-color: #FFFFFF;
-            border: 1px solid #E0E4E8;
-            border-radius: 10px;
-            padding: 20px;
-            color: #5A6A7A;
-        }
-        QSlider::groove:horizontal {
-            height: 6px;
-            background: #E0E4E8;
-            border-radius: 3px;
-        }
-        QSlider::handle:horizontal {
-            background: #2C3E50;
-            border: 2px solid #FFFFFF;
-            width: 20px;
-            height: 20px;
-            margin: -8px 0;
-            border-radius: 11px;
-        }
-        QSlider::handle:horizontal:hover {
-            background: #3498DB;
-        }
-        QSlider::sub-page:horizontal {
-            background: #3498DB;
-            border-radius: 3px;
-        }
-        QComboBox {
-            background-color: #FFFFFF;
-            color: #2C3E50;
-            border: 1px solid #E0E4E8;
-            border-radius: 6px;
-            padding: 10px 16px;
+        QLabel#pageSubtitle {
+            color: #6B7280;
             font-size: 15px;
         }
-        QComboBox:hover {
-            border-color: #3498DB;
+        QLabel#fieldLabel {
+            color: #4B5563;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        QLabel#hint {
+            color: #6B7280;
+            font-size: 13px;
+        }
+        QLabel#ratingValue {
+            color: #4F46E5;
+            font-size: 22px;
+            font-weight: 600;
+        }
+        QLabel#card, QLabel#sentenceCard, QLabel#info {
+            background-color: #FFFFFF;
+            border: 1px solid #E3E8EF;
+            border-radius: 14px;
+            padding: 24px;
+            color: #111827;
+        }
+        QLabel#card {
+            font-size: 30px;
+            font-weight: 300;
+        }
+        QLabel#sentenceCard {
+            font-size: 21px;
+            color: #374151;
+        }
+        QLabel#info {
+            font-size: 20px;
+            color: #4B5563;
+        }
+        QFrame#panel {
+            background-color: #FFFFFF;
+            border: 1px solid #E3E8EF;
+            border-radius: 14px;
+        }
+
+        /* Buttons: primary by default, variants via the "variant" property */
+        QPushButton {
+            background-color: #4F46E5;
+            color: #FFFFFF;
+            border: none;
+            border-radius: 10px;
+            padding: 10px 22px;
+            font-size: 15px;
+            font-weight: 600;
+        }
+        QPushButton:hover {
+            background-color: #4338CA;
+        }
+        QPushButton:pressed {
+            background-color: #3730A3;
+        }
+        QPushButton:focus {
+            outline: none;
+        }
+        QPushButton[variant="secondary"] {
+            background-color: #FFFFFF;
+            color: #374151;
+            border: 1px solid #D1D5DB;
+        }
+        QPushButton[variant="secondary"]:hover {
+            background-color: #F3F4F6;
+            border-color: #9CA3AF;
+        }
+        QPushButton[variant="secondary"]:pressed {
+            background-color: #E5E7EB;
+        }
+        QPushButton[variant="danger"] {
+            background-color: #FFFFFF;
+            color: #DC2626;
+            border: 1px solid #FCA5A5;
+        }
+        QPushButton[variant="danger"]:hover {
+            background-color: #FEF2F2;
+            border-color: #DC2626;
+        }
+        QPushButton[variant="danger"]:pressed {
+            background-color: #FEE2E2;
+        }
+
+        QSlider::groove:horizontal {
+            height: 8px;
+            background: #E5E7EB;
+            border-radius: 4px;
+        }
+        QSlider::sub-page:horizontal {
+            background: #6366F1;
+            border-radius: 4px;
+        }
+        QSlider::handle:horizontal {
+            background: #FFFFFF;
+            border: 3px solid #4F46E5;
+            width: 18px;
+            height: 18px;
+            margin: -8px 0;
+            border-radius: 12px;
+        }
+        QSlider::handle:horizontal:hover {
+            background: #EEF2FF;
+        }
+
+        QComboBox, QLineEdit {
+            background-color: #FFFFFF;
+            color: #1F2937;
+            border: 1px solid #D1D5DB;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 15px;
+            selection-background-color: #C7D2FE;
+            selection-color: #1F2937;
+        }
+        QComboBox:hover, QLineEdit:hover {
+            border-color: #9CA3AF;
+        }
+        QComboBox:focus, QLineEdit:focus {
+            border: 1px solid #6366F1;
         }
         QComboBox::drop-down {
             border: none;
-            width: 30px;
+            width: 32px;
         }
         QComboBox::down-arrow {
-            image: none;
-            border-left: 5px solid transparent;
-            border-right: 5px solid transparent;
-            border-top: 6px solid #2C3E50;
-            margin-right: 10px;
+            image: url("{CHEVRON_DOWN}");
+            width: 12px;
+            height: 8px;
+            margin-right: 12px;
         }
         QComboBox QAbstractItemView {
             background-color: #FFFFFF;
-            border: 1px solid #E0E4E8;
-            border-radius: 4px;
-            selection-background-color: #EBF5FB;
-            selection-color: #2C3E50;
+            border: 1px solid #E3E8EF;
+            selection-background-color: #EEF2FF;
+            selection-color: #1F2937;
+            outline: none;
             padding: 4px;
         }
+
+        /* Tables (QTableView and QTableWidget) */
         QTableView {
             background-color: #FFFFFF;
-            border: 1px solid #E0E4E8;
-            border-radius: 8px;
-            gridline-color: #F0F2F5;
-            selection-background-color: #EBF5FB;
-            selection-color: #2C3E50;
-            font-size: 13px;
+            alternate-background-color: #F9FAFB;
+            border: 1px solid #E3E8EF;
+            border-radius: 12px;
+            gridline-color: transparent;
+            selection-background-color: #E0E7FF;
+            selection-color: #111827;
+            color: #1F2937;
+            font-size: 14px;
+            outline: none;
         }
         QTableView::item {
-            padding: 6px 10px;
+            padding: 0px 12px;
+            border: none;
+        }
+        QTableView::item:hover {
+            background-color: #F3F4F6;
+        }
+        QTableView::item:selected {
+            background-color: #E0E7FF;
+            color: #111827;
+        }
+        QHeaderView {
+            background-color: transparent;
         }
         QHeaderView::section {
-            background-color: #F5F6F8;
-            color: #2C3E50;
+            background-color: #F9FAFB;
+            color: #4B5563;
             font-weight: 600;
             font-size: 13px;
             border: none;
-            border-bottom: 2px solid #E0E4E8;
-            padding: 8px 10px;
+            border-bottom: 1px solid #E3E8EF;
+            padding: 10px 12px;
         }
         QHeaderView::section:hover {
-            background-color: #EBF5FB;
+            background-color: #EEF2FF;
+            color: #1F2937;
         }
-        QMessageBox {
-            background-color: #F5F6F8;
+        QTableCornerButton::section {
+            background-color: #F9FAFB;
+            border: none;
+        }
+
+        QScrollBar:vertical {
+            background: transparent;
+            width: 12px;
+            margin: 4px 2px;
+        }
+        QScrollBar::handle:vertical {
+            background: #CBD5E1;
+            border-radius: 4px;
+            min-height: 32px;
+        }
+        QScrollBar:horizontal {
+            background: transparent;
+            height: 12px;
+            margin: 2px 4px;
+        }
+        QScrollBar::handle:horizontal {
+            background: #CBD5E1;
+            border-radius: 4px;
+            min-width: 32px;
+        }
+        QScrollBar::handle:hover {
+            background: #94A3B8;
+        }
+        QScrollBar::add-line, QScrollBar::sub-line,
+        QScrollBar::add-page, QScrollBar::sub-page {
+            background: none;
+            border: none;
+            width: 0px;
+            height: 0px;
+        }
+
+        QToolTip {
+            background-color: #111827;
+            color: #F9FAFB;
+            border: none;
+            padding: 6px 8px;
+            font-size: 13px;
         }
         QMessageBox QPushButton {
             min-width: 90px;
-            min-height: 34px;
-        }
-        QLineEdit {
-            background-color: #FFFFFF;
-            color: #2C3E50;
-            border: 1px solid #E0E4E8;
-            border-radius: 6px;
-            padding: 8px 12px;
-            font-size: 14px;
-        }
-        QLineEdit:focus {
-            border-color: #3498DB;
-        }
-        QTableWidget {
-            background-color: #FFFFFF;
-            border: 1px solid #E0E4E8;
-            border-radius: 8px;
-            gridline-color: #F0F2F5;
-            selection-background-color: #EBF5FB;
-            selection-color: #2C3E50;
-            font-size: 13px;
-        }
-        QTableWidget::item {
-            padding: 6px 10px;
+            min-height: 20px;
         }
     """
 
@@ -568,48 +720,146 @@ class GUI:
         mixer.init()
 
         self.app = QApplication([])
-        self.app.setStyleSheet(GUI.STYLESHEET)
+        # absolute path, because the working directory changes during runtime (os.chdir)
+        chevron_path = os.path.join(config.MAIN_PATH, config.FILES_PATH, "chevron_down.svg").replace("\\", "/")
+        self.app.setStyleSheet(GUI.STYLESHEET.replace("{CHEVRON_DOWN}", chevron_path))
         self.window = QMainWindow()
         self.start_main_menu()
 
-    def start_main_menu(self) -> None:
-        """Set up the main menu as part of the GUI."""
+    # LAYOUT HELPERS
+
+    def _new_page(self, centered: bool = True) -> QVBoxLayout:
+        """Replace the central widget with an empty page and return its layout."""
         central_widget = QWidget()
         self.window.setCentralWidget(central_widget)
-
-        layout = QVBoxLayout()
-        layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        layout = QVBoxLayout(central_widget)
         layout.setSpacing(14)
+        if centered:
+            layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        else:
+            layout.setContentsMargins(32, 28, 32, 28)
+        return layout
 
-        # Title
-        title_label = QLabel('Vocabulary Trainer')
-        title_label.setFont(QFont("Segoe UI", 28, QFont.Weight.Light))
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_label.setStyleSheet("color: #2C3E50; margin-bottom: 30px;")
-        layout.addWidget(title_label)
+    @staticmethod
+    def _title_block(title: str, subtitle: str = "", centered: bool = True) -> QVBoxLayout:
+        """Create a page title with an optional subtitle underneath."""
+        block = QVBoxLayout()
+        block.setSpacing(4)
+        alignment = Qt.AlignmentFlag.AlignCenter if centered else Qt.AlignmentFlag.AlignLeft
+        title_label = QLabel(title)
+        title_label.setObjectName("pageTitle")
+        title_label.setAlignment(alignment)
+        block.addWidget(title_label)
+        if subtitle:
+            subtitle_label = QLabel(subtitle)
+            subtitle_label.setObjectName("pageSubtitle")
+            subtitle_label.setAlignment(alignment)
+            block.addWidget(subtitle_label)
+        return block
 
-        button_width = 280
-        button_height = 52
+    @staticmethod
+    def _button(text: str, variant: str = "", width: int | None = None, height: int = 52) -> QPushButton:
+        """Create a button; variant is "" (primary), "secondary" or "danger"."""
+        button = QPushButton(text)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        if variant:
+            button.setProperty("variant", variant)
+        if width:
+            button.setFixedSize(width, height)
+        else:
+            button.setFixedHeight(height)
+        return button
 
-        self.start_training_button = QPushButton('Start Training')
-        self.start_training_button.setFixedSize(button_width, button_height)
+    @staticmethod
+    def _set_variant(button: QPushButton, variant: str) -> None:
+        """Change the variant of an already visible button and re-apply the stylesheet."""
+        button.setProperty("variant", variant)
+        button.style().unpolish(button)
+        button.style().polish(button)
 
-        self.explore_statistics_button = QPushButton('Explore Statistics')
-        self.explore_statistics_button.setFixedSize(button_width, button_height)
+    @staticmethod
+    def _hint(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("hint")
+        return label
 
-        self.manage_vocabulary_button = QPushButton('Manage Vocabulary')
-        self.manage_vocabulary_button.setFixedSize(button_width, button_height)
+    def _rating_widget(self, width: int) -> QWidget:
+        """Create the slider to rate how well a word was known; the slider is stored in self.slider."""
+        container = QWidget()
+        container.setFixedWidth(width)
+        grid = QGridLayout(container)
+        grid.setContentsMargins(0, 6, 0, 6)
+        grid.setVerticalSpacing(4)
 
-        self.exit_button = QPushButton('Exit')
-        self.exit_button.setFixedSize(button_width, button_height)
-        self.exit_button.setStyleSheet("background-color: #5A6A7A;")
+        value_label = QLabel()
+        value_label.setObjectName("ratingValue")
+        value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setMinimum(0)
+        self.slider.setMaximum(100)
+        self.slider.setSingleStep(1)
+        self.slider.setPageStep(10)
+        self.slider.setFixedHeight(30)
+        self.slider.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        def update_value(value: int) -> None:
+            value_label.setText(str(value))
+            value_label.setStyleSheet(f"color: {score_color(value)};")
+
+        self.slider.valueChanged.connect(update_value)
+        self.slider.setSliderPosition(50)
+        update_value(50)
+
+        high_label = GUI._hint("Knew it perfectly")
+        high_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        grid.addWidget(GUI._hint("How well did you know it?"), 0, 0)
+        grid.addWidget(value_label, 0, 1)
+        grid.addWidget(self.slider, 1, 0, 1, 2)
+        grid.addWidget(GUI._hint("Not at all"), 2, 0)
+        grid.addWidget(high_label, 2, 1)
+        container.setFixedHeight(container.sizeHint().height())
+        return container
+
+    @staticmethod
+    def _style_table(table: QTableView) -> None:
+        """Apply the common look of all tables: no grid, zebra rows, comfortable row height."""
+        table.setAlternatingRowColors(True)
+        table.setShowGrid(False)
+        table.setWordWrap(False)
+        table.setTextElideMode(Qt.TextElideMode.ElideRight)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(40)
+        table.horizontalHeader().setHighlightSections(False)
+        table.horizontalHeader().setMinimumSectionSize(70)
+        table.horizontalHeader().setFixedHeight(42)
+
+    # SCREENS
+
+    def start_main_menu(self) -> None:
+        """Set up the main menu as part of the GUI."""
+        layout = self._new_page()
+
+        layout.addLayout(GUI._title_block('Vocabulary Trainer', 'Dutch ↔ German'))
+        layout.addSpacing(30)
+
+        button_width = 300
+
+        self.start_training_button = GUI._button('Start Training', width=button_width)
+        self.explore_statistics_button = GUI._button('Explore Statistics', width=button_width)
+        self.manage_vocabulary_button = GUI._button('Manage Vocabulary', width=button_width)
+        self.exit_button = GUI._button('Exit', "secondary", width=button_width)
 
         layout.addWidget(self.start_training_button)
         layout.addWidget(self.explore_statistics_button)
         layout.addWidget(self.manage_vocabulary_button)
+        layout.addSpacing(12)
         layout.addWidget(self.exit_button)
-
-        central_widget.setLayout(layout)
 
         self.start_training_button.clicked.connect(self.select_training_type)
         self.explore_statistics_button.clicked.connect(self.explore_statistics)
@@ -621,44 +871,32 @@ class GUI:
 
     def select_training_type(self) -> None:
         """Set up the training type selection screen as part of the GUI."""
-        
-        # three buttons, one for Dutch -> German, one for German -> Dutch, Random; they launch the respective functions
+        layout = self._new_page()
 
-        # Remove existing widgets from the layout
-        layout = self.window.centralWidget().layout()
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-        
+        layout.addLayout(GUI._title_block('Choose a Training Mode', 'Pick the direction you want to practise'))
+        layout.addSpacing(30)
+
         button_width = 320
-        button_height = 52
 
-        button_dutch_german = QPushButton('Dutch \u2192 German')
-        button_dutch_german.setFixedSize(button_width, button_height)
+        button_dutch_german = GUI._button('Dutch → German', width=button_width)
+        button_german_dutch = GUI._button('German → Dutch', width=button_width)
+        button_random = GUI._button('Random Direction', width=button_width)
+        button_advanced_mode = GUI._button('Advanced Mode (AI)', width=button_width)
+        button_back = GUI._button('Back', "secondary", width=button_width)
+
         layout.addWidget(button_dutch_german)
-
-        button_german_dutch = QPushButton('German \u2192 Dutch')
-        button_german_dutch.setFixedSize(button_width, button_height)
         layout.addWidget(button_german_dutch)
-
-        button_random = QPushButton('Random')
-        button_random.setFixedSize(button_width, button_height)
         layout.addWidget(button_random)
-
-        button_advanced_mode = QPushButton('Advanced Mode')
-        button_advanced_mode.setFixedSize(button_width, button_height)
         layout.addWidget(button_advanced_mode)
-
-        # refresh the window
-        self.window.update()
+        layout.addSpacing(12)
+        layout.addWidget(button_back)
 
         # Connect button clicks to their respective functions
         button_dutch_german.clicked.connect(self.start_dutch_german)
         button_german_dutch.clicked.connect(self.start_german_dutch)
         button_random.clicked.connect(self.start_random)
         button_advanced_mode.clicked.connect(self.start_advanced_mode)
+        button_back.clicked.connect(self.start_main_menu)
 
     def end_training(self) -> None:
         """End the training and return to the main menu when the user clicks the 'End Training' button."""
@@ -680,28 +918,15 @@ class GUI:
             label.setText(label_text)
 
             if not slider_added:
-                # remove button change_screen
+                # replace "End Training" with the rating slider and "Next Vocabulary"
                 layout.removeWidget(button_end_training)
-                button_end_training.deleteLater()  # Delete the widget
-                # add button confirm_selection
+                button_end_training.hide()
+                button_end_training.deleteLater()
+                button_translate.setText('Flip Card')
+                GUI._set_variant(button_translate, "secondary")
+                layout.addWidget(self._rating_widget(card_width))
                 layout.addWidget(button_next_vok)
-                # add slider to evaluate how well the translation was known
-                self.slider = QSlider(Qt.Orientation.Horizontal)
-                self.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-                self.slider.setTickInterval(1)
-                self.slider.setMinimum(0)
-                self.slider.setMaximum(100)
-                self.slider.setSingleStep(1)
-                self.slider.setPageStep(10)
-                self.slider.setSliderPosition(50)
-                self.slider.setFixedSize(500, 60) # width, height
-                self.slider.setFont(QFont("Arial", 16))
-                layout.addWidget(self.slider)
-                # nonlocal slider_added
                 slider_added = True
-
-                #update screen  
-                self.window.update()
 
         def next_vocab() -> None:
             """Save the statistics and continue with the next vocabulary."""
@@ -727,31 +952,21 @@ class GUI:
 
         # SET UP THE LAYOUT
 
-        # Remove existing widgets from the layout
-        layout = self.window.centralWidget().layout()
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+        layout = self._new_page()
+        card_width = 560
 
         dutch_word, correct_translation, phonetics, vocab_nr = Logic.ask_question()
 
         label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
-        label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
+        label = QLabel(label_text, alignment=Qt.AlignmentFlag.AlignCenter)
         label.setObjectName("card")
-        label.setFont(QFont("Segoe UI", 22, QFont.Weight.Light))
-        label.setFixedSize(500, 280)
+        label.setFixedSize(card_width, 300)
 
-        button_translate = QPushButton('Show Translation')
-        button_translate.setFixedSize(500, 52)
+        button_translate = GUI._button('Show Translation', width=card_width)
+        button_end_training = GUI._button('End Training', "secondary", width=card_width)
+        button_next_vok = GUI._button('Next Vocabulary', width=card_width)
 
-        button_end_training = QPushButton('End Training')
-        button_end_training.setFixedSize(500, 52)
-
-        button_next_vok = QPushButton('Next Vocabulary')
-        button_next_vok.setFixedSize(500, 52)
-
+        layout.addWidget(GUI._hint('Dutch → German'), alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(label)
         layout.addWidget(button_translate)
         layout.addWidget(button_end_training)
@@ -776,29 +991,16 @@ class GUI:
             label.setText(label_text)
 
             if not slider_added:
-                # remove button change_screen
+                # replace "End Training" with the rating slider and "Next Vocabulary"
                 layout.removeWidget(button_end_training)
-                button_end_training.deleteLater()  # Delete the widget
-                # add button confirm_selection
+                button_end_training.hide()
+                button_end_training.deleteLater()
+                button_translate.setText('Flip Card')
+                GUI._set_variant(button_translate, "secondary")
+                layout.addWidget(self._rating_widget(card_width))
                 layout.addWidget(button_next_vok)
-                # add slider to evaluate how well the translation was known
-                self.slider = QSlider(Qt.Orientation.Horizontal)
-                self.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-                self.slider.setTickInterval(1)
-                self.slider.setMinimum(0)
-                self.slider.setMaximum(100)
-                self.slider.setSingleStep(1)
-                self.slider.setPageStep(10)
-                self.slider.setSliderPosition(50)
-                self.slider.setFixedSize(500, 60) # width, height
-                self.slider.setFont(QFont("Arial", 16))
-                layout.addWidget(self.slider)
-                # nonlocal slider_added
                 slider_added = True
 
-                #update screen  
-                self.window.update()
-        
         # save the statistics and continue with next word
         def next_vocab():
             print(vocab_nr)
@@ -823,13 +1025,8 @@ class GUI:
 
         # SET UP THE LAYOUT
 
-        # Remove existing widgets from the layout
-        layout = self.window.centralWidget().layout()
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+        layout = self._new_page()
+        card_width = 560
 
         # Create a QLabel with vocabulary to ask
         dutch_word, correct_translation, phonetics, vocab_nr = Logic.ask_question()
@@ -837,32 +1034,20 @@ class GUI:
 
         # ToDo: if phenetics is empty, don't show it
         label_text = Logic.short_lines(german_word)
-        label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
-        label.setFont(QFont("Times New Roman", 24))
-        label.setFixedSize(500,300) # width, height
-        #set border 
-        label.setStyleSheet("border: 1px solid black;")
+        label = QLabel(label_text, alignment=Qt.AlignmentFlag.AlignCenter)
+        label.setObjectName("card")
+        label.setFixedSize(card_width, 300)
 
-        # create a button under the label to show the correct translation
-        button_translate = QPushButton('Show Translation')
-        button_translate.setFixedSize(500, 60) # width, height
-        button_translate.setFont(QFont("Arial", 16))
-        
-        button_end_training = QPushButton('End Training')
-        button_end_training.setFixedSize(500, 60) # width, height
-        button_end_training.setFont(QFont("Arial", 16))
+        button_translate = GUI._button('Show Translation', width=card_width)
+        button_end_training = GUI._button('End Training', "secondary", width=card_width)
+        button_next_vok = GUI._button('Next Vocabulary', width=card_width)
 
-        button_next_vok = QPushButton('Next Vocabulary')
-        button_next_vok.setFixedSize(500, 60) # width, height
-        button_next_vok.setFont(QFont("Arial", 16))
-
-        # Add the label to the layout
+        layout.addWidget(GUI._hint('German → Dutch'), alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(label)
-        # put button 100 px more to the right
         layout.addWidget(button_translate)
-        layout.addWidget(button_end_training) #, alignment=Qt.AlignmentFlag.AlignBottom
+        layout.addWidget(button_end_training)
 
-        # # Connect button clicks to their respective functions
+        # Connect button clicks to their respective functions
         button_translate.clicked.connect(show_translation)
         button_end_training.clicked.connect(self.end_training)
         button_next_vok.clicked.connect(next_vocab)
@@ -887,29 +1072,16 @@ class GUI:
             label.setText(label_text)
 
             if not slider_added:
-                # remove button change_screen
+                # replace "End Training" with the rating slider and "Next Vocabulary"
                 layout.removeWidget(button_end_training)
-                button_end_training.deleteLater()  # Delete the widget
-                # add button confirm_selection
+                button_end_training.hide()
+                button_end_training.deleteLater()
+                button_translate.setText('Flip Card')
+                GUI._set_variant(button_translate, "secondary")
+                layout.addWidget(self._rating_widget(card_width))
                 layout.addWidget(button_next_vok)
-                # add slider to evaluate how well the translation was known
-                self.slider = QSlider(Qt.Orientation.Horizontal)
-                self.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-                self.slider.setTickInterval(1)
-                self.slider.setMinimum(0)
-                self.slider.setMaximum(100)
-                self.slider.setSingleStep(1)
-                self.slider.setPageStep(10)
-                self.slider.setSliderPosition(50)
-                self.slider.setFixedSize(500, 60) # width, height
-                self.slider.setFont(QFont("Arial", 16))
-                layout.addWidget(self.slider)
-                # nonlocal slider_added
                 slider_added = True
 
-                #update screen  
-                self.window.update()
-        
         def next_vocab() -> None:
             """Save the statistics and continue with the next vocabulary."""
             global vocab_nr
@@ -938,13 +1110,8 @@ class GUI:
 
         # SET UP THE LAYOUT
 
-        # Remove existing widgets from the layout
-        layout = self.window.centralWidget().layout()
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+        layout = self._new_page()
+        card_width = 560
 
         # Create a QLabel with vocabulary to ask
         dutch_word, correct_translation, phonetics, vocab_nr = Logic.ask_question()
@@ -952,34 +1119,24 @@ class GUI:
         # ToDo: if phenetics is empty, don't show it
         if random.randint(0,1) == 0:
             label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
+            mode_text = 'Dutch → German'
         else:
             label_text = Logic.short_lines(correct_translation)
-        label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
-        label.setFont(QFont("Times New Roman", 24))
-        label.setFixedSize(500,300) # width, height
-        #set border 
-        label.setStyleSheet("border: 1px solid black;")
+            mode_text = 'German → Dutch'
+        label = QLabel(label_text, alignment=Qt.AlignmentFlag.AlignCenter)
+        label.setObjectName("card")
+        label.setFixedSize(card_width, 300)
 
-        # create a button under the label to show the correct translation
-        button_translate = QPushButton('Show Translation')
-        button_translate.setFixedSize(500, 60) # width, height
-        button_translate.setFont(QFont("Arial", 16))
-        
-        button_end_training = QPushButton('End Training')
-        button_end_training.setFixedSize(500, 60) # width, height
-        button_end_training.setFont(QFont("Arial", 16))
+        button_translate = GUI._button('Show Translation', width=card_width)
+        button_end_training = GUI._button('End Training', "secondary", width=card_width)
+        button_next_vok = GUI._button('Next Vocabulary', width=card_width)
 
-        button_next_vok = QPushButton('Next Vocabulary')
-        button_next_vok.setFixedSize(500, 60) # width, height
-        button_next_vok.setFont(QFont("Arial", 16))
-
-        # Add the label to the layout
+        layout.addWidget(GUI._hint(f'Random · {mode_text}'), alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(label)
-        # put button 100 px more to the right
         layout.addWidget(button_translate)
-        layout.addWidget(button_end_training) #, alignment=Qt.AlignmentFlag.AlignBottom
+        layout.addWidget(button_end_training)
 
-        # # Connect button clicks to their respective functions
+        # Connect button clicks to their respective functions
         button_translate.clicked.connect(show_translation)
         button_end_training.clicked.connect(self.end_training)
         button_next_vok.clicked.connect(next_vocab)
@@ -1010,29 +1167,16 @@ class GUI:
             label_ai_sentence.setText(label_text_ai)
 
             if not slider_added:
-                # remove button change_screen
+                # replace "End Training" with the rating slider and "Next Vocabulary"
                 layout.removeWidget(button_end_training)
-                button_end_training.deleteLater()  # Delete the widget
-                # add button confirm_selection
+                button_end_training.hide()
+                button_end_training.deleteLater()
+                button_translate.setText('Flip Cards')
+                GUI._set_variant(button_translate, "secondary")
+                layout.addWidget(self._rating_widget(card_width))
                 layout.addWidget(button_next_vok)
-                # add slider to evaluate how well the translation was known
-                self.slider = QSlider(Qt.Orientation.Horizontal)
-                self.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-                self.slider.setTickInterval(1)
-                self.slider.setMinimum(0)
-                self.slider.setMaximum(100)
-                self.slider.setSingleStep(1)
-                self.slider.setPageStep(10)
-                self.slider.setSliderPosition(50)
-                self.slider.setFixedSize(800, 60) # width, height
-                self.slider.setFont(QFont("Arial", 16))
-                layout.addWidget(self.slider)
-                # nonlocal slider_added
                 slider_added = True
 
-                #update screen  
-                self.window.update()
-        
         def next_vocab() -> None:
             """Save the statistics and continue with the next vocabulary."""
             print(vocab_nr)
@@ -1057,71 +1201,45 @@ class GUI:
 
         # SET UP THE LAYOUT
 
-        # Remove existing widgets from the layout
-        layout = self.window.centralWidget().layout()
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+        layout = self._new_page()
+        card_width = 800
 
         # Create a QLabel with vocabulary to ask
         dutch_word, correct_translation, phonetics, vocab_nr = Logic.ask_question()
 
         label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
-        label = QLabel(label_text, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
-        label.setFont(QFont("Times New Roman", 24))
-        label.setFixedSize(800,200) # width, height
-        #set border 
-        label.setStyleSheet("border: 1px solid black;")
+        label = QLabel(label_text, alignment=Qt.AlignmentFlag.AlignCenter)
+        label.setObjectName("card")
+        label.setFixedSize(card_width, 180)
 
         # generate data with AI
         ai_sentence = AiApi.generate_AI_sentence(dutch_word, aiapi.OpenAiClient)
-        ai_sentence_translation = "Dies ist ein Test, um zu sehen, wie das Programm die visuelle Darstellung eines längeren Satzes handhabt. Es sollte in der Lage sein, den ganzen Satz anzuzeigen und ihn nicht abzuschneiden. Der Satz sollte in der Mitte des Fensters angezeigt werden." #TODO
         ai_sentence_translation = AiApi.generate_AI_translation(ai_sentence, aiapi.OpenAiClient)
         logic.sound_created = False
-        
+
         # Create second Qlabel, which will show the AI sentence
         label_text_ai = Logic.short_lines(ai_sentence, pixel=800)
-        label_ai_sentence = QLabel(label_text_ai, self.window, alignment=Qt.AlignmentFlag.AlignCenter)
-        label_ai_sentence.setFont(QFont("Times New Roman", 20))
-        label_ai_sentence.setFixedSize(800,300) # width, height
-        #set border
-        label_ai_sentence.setStyleSheet("border: 1px solid black;")
+        label_ai_sentence = QLabel(label_text_ai, alignment=Qt.AlignmentFlag.AlignCenter)
+        label_ai_sentence.setObjectName("sentenceCard")
+        label_ai_sentence.setFixedSize(card_width, 260)
 
-        # create a button under the label to show the correct translation
-        button_translate = QPushButton('Show Translation')
-        button_translate.setFixedSize(800, 60) # width, height
-        button_translate.setFont(QFont("Arial", 16))
-        
-        button_end_training = QPushButton('End Training')
-        button_end_training.setFixedSize(800, 60) # width, height
-        button_end_training.setFont(QFont("Arial", 16))
+        button_translate = GUI._button('Show Translation', width=card_width)
+        button_play_sound = GUI._button('▶  Play Sound', "secondary", width=card_width)
+        button_end_training = GUI._button('End Training', "secondary", width=card_width)
+        button_next_vok = GUI._button('Next Vocabulary', width=card_width)
 
-        button_next_vok = QPushButton('Next Vocabulary')
-        button_next_vok.setFixedSize(800, 60) # width, height
-        button_next_vok.setFont(QFont("Arial", 16))
-
-        button_play_sound = QPushButton('Play Sound')
-        button_play_sound.setFixedSize(800, 60)
-        button_play_sound.setFont(QFont("Arial", 16))
-
-        # Add the label to the layout
+        layout.addWidget(GUI._hint('AI Sentences · Dutch → German'), alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(label)
         layout.addWidget(label_ai_sentence)
-        # put button 100 px more to the right
         layout.addWidget(button_translate)
         layout.addWidget(button_play_sound)
-        layout.addWidget(button_end_training) #, alignment=Qt.AlignmentFlag.AlignBottom
+        layout.addWidget(button_end_training)
 
         # Connect button clicks to their respective functions
         button_translate.clicked.connect(show_translation)
         button_end_training.clicked.connect(self.end_training)
         button_next_vok.clicked.connect(next_vocab)
         button_play_sound.clicked.connect(lambda: AiApi.text_to_speech(ai_sentence, aiapi.OpenAiClient, logic.voice_model))
-
-        # refresh the window
-        self.window.update()
 
     def start_advanced_mode(self) -> None:
         """Set up the advanced mode screen with dropdowns for voice model, language direction, and sentence style."""
@@ -1133,58 +1251,41 @@ class GUI:
 
         # SET UP THE LAYOUT
 
-        # Remove existing widgets from the layout
-        layout = self.window.centralWidget().layout()
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+        layout = self._new_page()
+        width = 420
 
-        # create a dropdown menu for chosing the voice model and add it to the layout
-        self.voice_model_dropdown = QComboBox(self.window)
-        self.voice_model_dropdown.addItem(" Voice Model:\tAlloy")
-        self.voice_model_dropdown.addItem(" Voice Model:\tEcho")
-        self.voice_model_dropdown.addItem(" Voice Model:\tFable")
-        self.voice_model_dropdown.addItem(" Voice Model:\tNova")
-        self.voice_model_dropdown.addItem(" Voice Model:\tOnyx")
-        self.voice_model_dropdown.addItem(" Voice Model:\tShimmer")
+        layout.addLayout(GUI._title_block('Advanced Mode', 'AI-generated example sentences with audio'))
+        layout.addSpacing(24)
 
-        self.voice_model_dropdown.setFixedSize(500, 60) # width, height
-        self.voice_model_dropdown.setFont(QFont("Arial", 16))
-        layout.addWidget(self.voice_model_dropdown)
+        def add_field(label_text: str, items: list) -> QComboBox:
+            field_label = QLabel(label_text)
+            field_label.setObjectName("fieldLabel")
+            dropdown = QComboBox(self.window)
+            dropdown.addItems(items)
+            dropdown.setFixedSize(width, 46)
+            dropdown.setCursor(Qt.CursorShape.PointingHandCursor)
+            layout.addWidget(field_label)
+            layout.addWidget(dropdown)
+            layout.addSpacing(6)
+            return dropdown
 
-        # create a dropdown menu for chosing the language and add it to the layout
-        self.language_dropdown = QComboBox(self.window)
-        self.language_dropdown.addItem(" Language:\tDutch -> German")
-        self.language_dropdown.addItem(" Language:\tGerman -> Dutch")
+        # the item order must match the index handling in the on_*_change methods
+        self.voice_model_dropdown = add_field("Voice", ["Alloy", "Echo", "Fable", "Nova", "Onyx", "Shimmer"])
+        self.language_dropdown = add_field("Direction", ["Dutch → German", "German → Dutch"])
+        self.sentence_style_dropdown = add_field("Sentence style", ["Normal", "Scientific", "Scary", "Offensive"])
 
-        self.language_dropdown.setFixedSize(500, 60) # width, height
-        self.language_dropdown.setFont(QFont("Arial", 16))
-        layout.addWidget(self.language_dropdown)
-
-        # create a dropdown menu for chosing the sentence style and add it to the layout
-        self.sentence_style_dropdown = QComboBox(self.window)
-        self.sentence_style_dropdown.addItem(" Sentence Style:\tNormal")
-        self.sentence_style_dropdown.addItem(" Sentence Style:\tScientific")
-        self.sentence_style_dropdown.addItem(" Sentence Style:\tScary")
-        self.sentence_style_dropdown.addItem(" Sentence Style:\tOffensive")
-
-        self.sentence_style_dropdown.setFixedSize(500, 60) # width, height
-        self.sentence_style_dropdown.setFont(QFont("Arial", 16))
-        layout.addWidget(self.sentence_style_dropdown)
-
-        # create a button to start the training and add it to the layout
-        button_start_advanced_training = QPushButton('Start Training')
-        button_start_advanced_training.setFixedSize(500, 60) # width, height
-        button_start_advanced_training.setFont(QFont("Arial", 16))
+        layout.addSpacing(18)
+        button_start_advanced_training = GUI._button('Start Training', width=width)
+        button_back = GUI._button('Back', "secondary", width=width)
         layout.addWidget(button_start_advanced_training)
+        layout.addWidget(button_back)
 
         # Connect the signals to the slots
         self.voice_model_dropdown.currentIndexChanged.connect(self.on_voice_model_change)
         self.language_dropdown.currentIndexChanged.connect(self.on_language_change)
         self.sentence_style_dropdown.currentIndexChanged.connect(self.on_sentence_style_change)
         button_start_advanced_training.clicked.connect(self.start_ai_sentences)
+        button_back.clicked.connect(self.select_training_type)
 
     def on_voice_model_change(self, index) -> None:
         """Change the voice model based on the selected index in the dropdown."""
@@ -1229,68 +1330,73 @@ class GUI:
 
     def explore_statistics(self) -> None:
         """Set up the statistics screen as part of the GUI."""
+        layout = self._new_page(centered=False)
 
-        def back_to_main_menu():
-            GUI.start_main_menu(self)
-        
-        # Remove existing widgets from the layout
-        layout = self.window.centralWidget().layout()
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-
-        # transform all data into a table form
+        # header: title on the left, search and back button on the right
         table_data = Logic.create_statistics_data()
+        header = QHBoxLayout()
+        header.addLayout(GUI._title_block('Statistics', f'{len(table_data)} words · click a column header to sort', centered=False))
+        header.addStretch()
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("Search words…")
+        search_input.setClearButtonEnabled(True)
+        search_input.setFixedSize(300, 42)
+        button_back_to_main_menu = GUI._button('Main Menu', "secondary", height=42)
+        header.addWidget(search_input, alignment=Qt.AlignmentFlag.AlignBottom)
+        header.addSpacing(8)
+        header.addWidget(button_back_to_main_menu, alignment=Qt.AlignmentFlag.AlignBottom)
+        layout.addLayout(header)
+        layout.addSpacing(6)
 
-        # Create a pyqt table with that data
+        # Create a pyqt table with that data; the proxy handles sorting and searching
         table = QTableView()
-        model = Table(table_data)
-        table.setModel(model)
+        model = Table(
+            table_data,
+            text_columns=('Dutch', 'German', 'Note'),
+            score_columns=('Avg', 'Avg Last 10', 'Avg NL→DE', 'Avg DE→NL'),
+            date_columns=('Last Asked',),
+        )
+        model.setParent(table)
+        proxy = QSortFilterProxyModel(table)
+        proxy.setSourceModel(model)
+        proxy.setSortRole(Table.SORT_ROLE)
+        proxy.setFilterKeyColumn(-1)
+        proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        table.setModel(proxy)
+        GUI._style_table(table)
 
-        # Enable sorting
+        # word columns start wide enough for their content (capped, still resizable),
+        # the note takes the remaining space, numeric columns fit their content
+        header_view = table.horizontalHeader()
+        for column in range(model.columnCount()):
+            column_name = table_data.columns[column]
+            if column_name in ('Dutch', 'German'):
+                header_view.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+                table.resizeColumnToContents(column)
+                table.setColumnWidth(column, min(table.columnWidth(column) + 16, 320))
+            elif column_name == 'Note':
+                header_view.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
+            else:
+                header_view.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+
         table.setSortingEnabled(True)
+        table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         layout.addWidget(table)
-        # Connect header click event to trigger sorting
-        table.horizontalHeader().sectionClicked.connect(lambda index: model.sort(index, table.horizontalHeader().sortIndicatorOrder()))
 
-        # add a button to go back to the main menu
-        button_back_to_main_menu = QPushButton('Main Menu')
-        width_of_screen = self.window.frameGeometry().width()
-        button_back_to_main_menu.setFixedSize(width_of_screen-20, 35) # width, height
-        button_back_to_main_menu.setFont(QFont("Arial", 12))
-        layout.addWidget(button_back_to_main_menu)
-        button_back_to_main_menu.clicked.connect(back_to_main_menu)
-
-        # refresh the window
-        self.window.update()
+        search_input.textChanged.connect(proxy.setFilterFixedString)
+        button_back_to_main_menu.clicked.connect(self.start_main_menu)
 
     def refresh_vocabulary(self) -> None:
         """Refresh the vocabulary by loading the data from the xlsx file."""
-        # SET UP THE LAYOUT
-
-        # Remove existing widgets from the layout
-        layout = self.window.centralWidget().layout()
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-        
-        self.window.update()
+        layout = self._new_page()
 
         # show message that the vocabulary is being refreshed
-        info_label = QLabel("Refreshing vocabulary...", self.window, alignment=Qt.AlignmentFlag.AlignCenter)
-        info_label.setFont(QFont("Times New Roman", 24))
-        info_label.setFixedSize(500,300) # width, height
-        #set border
-        info_label.setStyleSheet("border: 1px solid black;")
+        info_label = QLabel("Refreshing vocabulary…", alignment=Qt.AlignmentFlag.AlignCenter)
+        info_label.setObjectName("info")
+        info_label.setFixedSize(500, 220)
         layout.addWidget(info_label)
-        # layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)  # Center horizontally
 
         # force the program to show the label (otherwise it will only show it after the vocabulary is refreshed)
-        info_label.setStyleSheet("background-color: #f0f0f0;")
         QCoreApplication.processEvents()
 
         # # actually refresh the data
@@ -1304,29 +1410,15 @@ class GUI:
         GUI.start_main_menu(self)
 
     def no_more_vocs(self) -> None:
-        """Set up the layout for the 'no more vocs' message.""" 
+        """Set up the layout for the 'no more vocs' message."""
+        layout = self._new_page()
 
-        # Remove existing widgets from the layout
-        layout = self.window.centralWidget().layout()
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-        
-        self.window.update()
-
-        # show message that the vocabulary is being refreshed
-        info_label = QLabel("Congrats! All Vocabularies were trained once!\nThe program will end now.", self.window, alignment=Qt.AlignmentFlag.AlignCenter)
-        info_label.setFont(QFont("Times New Roman", 24))
-        info_label.setFixedSize(900,900) # width, height
-        #set border
-        info_label.setStyleSheet("border: 1px solid black;")
+        info_label = QLabel("Congrats! All vocabularies were trained once!\nThe program will end now.", alignment=Qt.AlignmentFlag.AlignCenter)
+        info_label.setObjectName("info")
+        info_label.setFixedSize(640, 300)
         layout.addWidget(info_label)
-        # layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)  # Center horizontally
 
-        # force the program to show the label (otherwise it will only show it after the vocabulary is refreshed)
-        info_label.setStyleSheet("background-color: #f0f0f0;")
+        # force the program to show the label before it ends
         QCoreApplication.processEvents()
 
     def play_sound(self, file_name: str) -> None:
@@ -1344,87 +1436,101 @@ class GUI:
 
     def manage_vocabulary(self) -> None:
         """Screen for adding, editing, and deleting vocabulary words."""
-        central_widget = QWidget()
-        self.window.setCentralWidget(central_widget)
-        layout = QVBoxLayout()
-        layout.setSpacing(10)
-        layout.setContentsMargins(20, 20, 20, 20)
-        central_widget.setLayout(layout)
+        layout = self._new_page(centered=False)
 
-        # Title
-        title_label = QLabel('Manage Vocabulary')
-        title_label.setFont(QFont("Segoe UI", 22, QFont.Weight.Light))
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_label.setStyleSheet("color: #2C3E50; margin-bottom: 8px;")
-        layout.addWidget(title_label)
+        # Header: title on the left, search and back button on the right
+        header = QHBoxLayout()
+        title_block = GUI._title_block('Manage Vocabulary', centered=False)
+        count_label = QLabel()
+        count_label.setObjectName("pageSubtitle")
+        title_block.addWidget(count_label)
+        header.addLayout(title_block)
+        header.addStretch()
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("Search words…")
+        search_input.setClearButtonEnabled(True)
+        search_input.setFixedSize(300, 42)
+        btn_back = GUI._button("Main Menu", "secondary", height=42)
+        header.addWidget(search_input, alignment=Qt.AlignmentFlag.AlignBottom)
+        header.addSpacing(8)
+        header.addWidget(btn_back, alignment=Qt.AlignmentFlag.AlignBottom)
+        layout.addLayout(header)
+        layout.addSpacing(6)
 
         # Table
         vocab_table = QTableWidget()
         vocab_table.setColumnCount(3)
         vocab_table.setHorizontalHeaderLabels(['Dutch', 'German', 'Note'])
         vocab_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        vocab_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        vocab_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-        vocab_table.horizontalHeader().setStretchLastSection(True)
-        vocab_table.verticalHeader().setVisible(False)
+        GUI._style_table(vocab_table)
+        for column in range(3):
+            vocab_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
+        for column in range(3):
+            vocab_table.horizontalHeaderItem(column).setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(vocab_table)
 
         self._selected_vocab_db_id = None
 
+        def apply_filter() -> None:
+            text = search_input.text().strip().lower()
+            for row in range(vocab_table.rowCount()):
+                matches = not text or any(text in vocab_table.item(row, c).text().lower() for c in range(3))
+                vocab_table.setRowHidden(row, not matches)
+
         def refresh_table() -> None:
             vocab_table.setRowCount(len(Data.dutch_voc_list))
             for i in range(len(Data.dutch_voc_list)):
-                vocab_table.setItem(i, 0, QTableWidgetItem(str(Data.dutch_voc_list[i])))
-                vocab_table.setItem(i, 1, QTableWidgetItem(str(Data.german_voc_list[i])))
-                vocab_table.setItem(i, 2, QTableWidgetItem(str(Data.phonetics_list[i])))
+                for column, value in enumerate((Data.dutch_voc_list[i], Data.german_voc_list[i], Data.phonetics_list[i])):
+                    item = QTableWidgetItem(str(value))
+                    item.setToolTip(str(value))
+                    if column == 0:
+                        font = item.font()
+                        font.setWeight(QFont.Weight.DemiBold)
+                        item.setFont(font)
+                    vocab_table.setItem(i, column, item)
             vocab_table.clearSelection()
             self._selected_vocab_db_id = None
             dutch_input.clear()
             german_input.clear()
             note_input.clear()
+            count_label.setText(f"{len(Data.dutch_voc_list)} words · select a row to edit it")
+            apply_filter()
 
-        # Form row
-        form_layout = QHBoxLayout()
-        form_layout.setSpacing(8)
+        # Edit panel: inputs with labels above them, buttons below
+        panel = QFrame()
+        panel.setObjectName("panel")
+        panel_layout = QGridLayout(panel)
+        panel_layout.setContentsMargins(20, 16, 20, 20)
+        panel_layout.setHorizontalSpacing(12)
+        panel_layout.setVerticalSpacing(6)
 
-        lbl_dutch = QLabel("Dutch:")
-        lbl_dutch.setStyleSheet("font-size: 14px; font-weight: 600;")
-        dutch_input = QLineEdit()
-        dutch_input.setPlaceholderText("Dutch word...")
-        dutch_input.setFixedHeight(40)
+        def add_input(column: int, label_text: str, placeholder: str, stretch: int) -> QLineEdit:
+            field_label = QLabel(label_text)
+            field_label.setObjectName("fieldLabel")
+            field_input = QLineEdit()
+            field_input.setPlaceholderText(placeholder)
+            field_input.setFixedHeight(42)
+            panel_layout.addWidget(field_label, 0, column)
+            panel_layout.addWidget(field_input, 1, column)
+            panel_layout.setColumnStretch(column, stretch)
+            return field_input
 
-        lbl_german = QLabel("German:")
-        lbl_german.setStyleSheet("font-size: 14px; font-weight: 600;")
-        german_input = QLineEdit()
-        german_input.setPlaceholderText("German translation...")
-        german_input.setFixedHeight(40)
+        dutch_input = add_input(0, "Dutch", "Dutch word…", 2)
+        german_input = add_input(1, "German", "German translation…", 2)
+        note_input = add_input(2, "Note", "Phonetics / note…", 1)
 
-        lbl_note = QLabel("Note:")
-        lbl_note.setStyleSheet("font-size: 14px; font-weight: 600;")
-        note_input = QLineEdit()
-        note_input.setPlaceholderText("Phonetics / note...")
-        note_input.setFixedHeight(40)
-
-        form_layout.addWidget(lbl_dutch)
-        form_layout.addWidget(dutch_input, 2)
-        form_layout.addWidget(lbl_german)
-        form_layout.addWidget(german_input, 2)
-        form_layout.addWidget(lbl_note)
-        form_layout.addWidget(note_input, 1)
-        layout.addLayout(form_layout)
-
-        # Button row
         btn_layout = QHBoxLayout()
-        btn_add = QPushButton("Add Word")
-        btn_update = QPushButton("Update Selected")
-        btn_delete = QPushButton("Delete Selected")
-        btn_delete.setStyleSheet("background-color: #C0392B;")
-        btn_back = QPushButton("Back")
-        btn_back.setStyleSheet("background-color: #5A6A7A;")
-        for btn in (btn_add, btn_update, btn_delete, btn_back):
-            btn.setFixedHeight(44)
-            btn_layout.addWidget(btn)
-        layout.addLayout(btn_layout)
+        btn_layout.setSpacing(10)
+        btn_add = GUI._button("Add Word", height=42)
+        btn_update = GUI._button("Update Selected", "secondary", height=42)
+        btn_delete = GUI._button("Delete Selected", "danger", height=42)
+        btn_layout.addWidget(btn_add)
+        btn_layout.addWidget(btn_update)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_delete)
+        panel_layout.addLayout(btn_layout, 2, 0, 1, 3)
+        panel_layout.setRowMinimumHeight(2, 58)
+        layout.addWidget(panel)
 
         def on_row_selected() -> None:
             if not vocab_table.selectedItems():
@@ -1493,11 +1599,11 @@ class GUI:
 
         refresh_table()
         vocab_table.itemSelectionChanged.connect(on_row_selected)
+        search_input.textChanged.connect(apply_filter)
         btn_add.clicked.connect(on_add)
         btn_update.clicked.connect(on_update)
         btn_delete.clicked.connect(on_delete)
         btn_back.clicked.connect(back_action)
-        self.window.update()
 
     # initialize the UI
     def run(self):
@@ -1854,7 +1960,7 @@ class Logic:
             # return the chosen vocab nr
             return chosen_vocab
         except:
-            GUI.no_more_vocs(GUI.instance[0])
+            GUI.no_more_vocs(gui)
             #freeze application for 10 seconds
             time.sleep(10)
             # stop the program
@@ -1916,58 +2022,31 @@ class Logic:
         return text_output
 
     def create_statistics_data() -> pd.DataFrame:
-        """Create a DataFrame with statistics about the vocabulary training."""
+        """Create a DataFrame with statistics about the vocabulary training (None = no answers yet)."""
+
+        def average(points: list) -> float | None:
+            return sum(points)/len(points) if points else None
+
         data_list = []
-
-        # create a list that tells how many points the vocs have on average
-        average_points = []
-        for i in range(len(Data.points)):
-            if len(Data.points[i]) > 0:
-                average_points.append(round(sum(Data.points[i])/len(Data.points[i]), 2))
-            else:
-                average_points.append(0)
-        # create a list that tell how many points the vocs have on average in the last 10 times they were asked
-        average_points_last_10 = []
-        for i in range(len(Data.points)):
-            if len(Data.points[i]) > 10:
-                average_points_last_10.append(round(sum(Data.points[i][-10:])/10, 2))
-            elif len(Data.points[i]) > 0:
-                average_points_last_10.append(round(sum(Data.points[i])/len(Data.points[i]), 2))
-            else:
-                average_points_last_10.append(0)
-        # calculate the average points for dutch->german and german->dutch translations
-        average_points_d_g = []
-        average_points_g_d = []
-        for i in range(len(Data.d_g_points)):
-            if len(Data.d_g_points[i]) > 0:
-                average_points_d_g.append(round(sum(Data.d_g_points[i])/len(Data.d_g_points[i]), 2))
-            else:
-                average_points_d_g.append(0)
-        for i in range(len(Data.g_d_points)):
-            if len(Data.g_d_points[i]) > 0:
-                average_points_g_d.append(round(sum(Data.g_d_points[i])/len(Data.g_d_points[i]), 2))
-            else:
-                average_points_g_d.append(0)
-
         for i in range(len(Data.dutch_voc_list)):
             data_list.append([
-                Data.dutch_voc_list[i], 
-                Data.german_voc_list[i], 
-                Data.phonetics_list[i], 
-                Data.asked[i], 
-                Data.correct[i], 
-                Data.wrong[i], 
-                Data.points[i],
-                average_points[i],
-                average_points_last_10[i],
-                Data.d_g_points[i],
-                average_points_d_g[i],
-                Data.g_d_points[i], 
-                average_points_g_d[i],
+                Data.dutch_voc_list[i],
+                Data.german_voc_list[i],
+                Data.phonetics_list[i],
+                Data.asked[i],
+                Data.correct[i],
+                Data.wrong[i],
+                average(Data.points[i]),
+                average(Data.points[i][-10:]),
+                average(Data.d_g_points[i]),
+                average(Data.g_d_points[i]),
+                "  ".join(str(round(p)) for p in Data.points[i][-5:]) or "—",
                 Data.last_asked[i]
             ])
 
-        table_data = pd.DataFrame(data_list, columns=['Dutch', 'German', 'Phonetics', 'Asked', 'Correct', 'Wrong', 'Points', 'Average Points', 'Average Points Last 10', 'Points D->G','Average Points D->G', 'Points G->D', 'Average Points G->D', 'Last Asked'])
+        table_data = pd.DataFrame(data_list, columns=['Dutch', 'German', 'Note', 'Asked', 'Correct', 'Wrong', 'Avg', 'Avg Last 10', 'Avg NL→DE', 'Avg DE→NL', 'Last 5 Scores', 'Last Asked'])
+        # keep None (not NaN) for missing averages so the table can show a dash
+        table_data = table_data.astype(object).where(table_data.notna(), None)
 
         return table_data
 
