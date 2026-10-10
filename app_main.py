@@ -15,8 +15,8 @@ import sys
 import time
 from pygame import mixer
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QSlider, QTableView, QTableWidget, QTableWidgetItem, QLineEdit, QComboBox, QMessageBox, QHeaderView, QAbstractItemView, QFrame, QGridLayout, QStackedWidget, QButtonGroup, QToolTip, QGraphicsOpacityEffect
-from PyQt6.QtGui import QFont, QColor, QPainter, QPainterPath, QPen, QFontMetrics, QLinearGradient, QRadialGradient
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QCoreApplication, QSortFilterProxyModel, QRectF, QPointF, QTimer, QElapsedTimer, QEvent, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QFont, QColor, QPainter, QPainterPath, QPen, QFontMetrics, QLinearGradient, QRadialGradient, QTransform
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QCoreApplication, QSortFilterProxyModel, QRectF, QPointF, QTimer, QElapsedTimer, QEvent, QPropertyAnimation, QVariantAnimation, QEasingCurve, pyqtSignal
 import openpyxl
 
 # MODULE IMPORTS
@@ -275,6 +275,77 @@ class BarChart(QWidget):
         self._hover = None
         QToolTip.hideText()
         self.update()
+
+class FlipCard(QLabel):
+    """
+    Vocabulary card that emits `clicked` when pressed and turns over with a 3D flip animation in flip_to().
+    Both faces are snapshotted before the animation, so the label always holds the final text.
+    """
+    clicked = pyqtSignal()
+    DURATION = 450  # ms
+
+    def __init__(self, text: str, object_name: str, width: int, height: int) -> None:
+        super().__init__(text, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.setObjectName(object_name)
+        self.setFixedSize(width, height)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._front = self._back = None
+        self._progress = 0.0
+        self._animation = QVariantAnimation(self)
+        self._animation.setStartValue(0.0)
+        self._animation.setEndValue(1.0)
+        self._animation.setDuration(FlipCard.DURATION)
+        self._animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._animation.valueChanged.connect(self._on_progress)
+        self._animation.finished.connect(self._on_finished)
+
+    def is_flipping(self) -> bool:
+        return self._animation.state() == QVariantAnimation.State.Running
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and not self.is_flipping():
+            self.clicked.emit()
+
+    def flip_to(self, text: str) -> None:
+        """Turn the card over so that it shows text afterwards."""
+        if self.is_flipping():
+            return
+        # snapshot both faces before storing them: grab() runs paintEvent, which must still paint normally
+        front = self.grab()
+        self.setText(text)
+        back = self.grab()
+        self._front, self._back = front, back
+        self._progress = 0.0
+        self._animation.start()
+
+    def _on_progress(self, value) -> None:
+        self._progress = float(value)
+        self.update()
+
+    def _on_finished(self) -> None:
+        self._front = self._back = None
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        if self._front is None:
+            super().paintEvent(event)
+            return
+        angle = self._progress * 180
+        face = self._front if angle < 90 else self._back
+        if angle >= 90:
+            angle -= 180  # back face turns in from the other side
+        lift = 1 - 0.06 * math.sin(math.pi * self._progress)  # card shrinks slightly while in the air
+        w, h = self.width(), self.height()
+        transform = QTransform()
+        transform.translate(w / 2, h / 2)
+        transform.rotate(angle, Qt.Axis.YAxis)
+        transform.scale(lift, lift)
+        transform.translate(-w / 2, -h / 2)
+        painter = QPainter(self)
+        painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        painter.setTransform(transform)
+        painter.drawPixmap(0, 0, face)
+
 
 class SplashOverlay(QWidget):
     """
@@ -947,6 +1018,9 @@ class GUI:
             font-size: 21px;
             color: $text_body;
         }
+        QLabel#card:hover, QLabel#sentenceCard:hover {
+            border-color: $accent;
+        }
         QLabel#info {
             font-size: 20px;
             color: $text_muted;
@@ -1397,15 +1471,13 @@ class GUI:
                 label_text = Logic.short_lines(correct_translation)
             else:
                 label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
-            label.setText(label_text)
+            label.flip_to(label_text)
 
             if not slider_added:
                 # replace "End Training" with the rating slider and "Next Vocabulary"
                 layout.removeWidget(button_end_training)
                 button_end_training.hide()
                 button_end_training.deleteLater()
-                button_translate.setText('Flip Card')
-                GUI._set_variant(button_translate, "secondary")
                 layout.addWidget(self._rating_widget(card_width))
                 layout.addWidget(button_next_vok)
                 slider_added = True
@@ -1441,20 +1513,16 @@ class GUI:
         dutch_word, correct_translation, phonetics, vocab_nr = Logic.ask_question()
 
         label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
-        label = QLabel(label_text, alignment=Qt.AlignmentFlag.AlignCenter)
-        label.setObjectName("card")
-        label.setFixedSize(card_width, 300)
+        label = FlipCard(label_text, "card", card_width, 300)
 
-        button_translate = GUI._button('Show Translation', width=card_width)
         button_end_training = GUI._button('End Training', "secondary", width=card_width)
         button_next_vok = GUI._button('Next Vocabulary', width=card_width)
 
-        layout.addWidget(GUI._hint('Dutch → German'), alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(GUI._hint('Dutch → German · click the card to flip it'), alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(label)
-        layout.addWidget(button_translate)
         layout.addWidget(button_end_training)
 
-        button_translate.clicked.connect(show_translation)
+        label.clicked.connect(show_translation)
         button_end_training.clicked.connect(self.end_training)
         button_next_vok.clicked.connect(next_vocab)
 
@@ -1471,15 +1539,13 @@ class GUI:
                 label_text = Logic.short_lines(german_word)
             else:
                 label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
-            label.setText(label_text)
+            label.flip_to(label_text)
 
             if not slider_added:
                 # replace "End Training" with the rating slider and "Next Vocabulary"
                 layout.removeWidget(button_end_training)
                 button_end_training.hide()
                 button_end_training.deleteLater()
-                button_translate.setText('Flip Card')
-                GUI._set_variant(button_translate, "secondary")
                 layout.addWidget(self._rating_widget(card_width))
                 layout.addWidget(button_next_vok)
                 slider_added = True
@@ -1518,21 +1584,17 @@ class GUI:
 
         # ToDo: if phenetics is empty, don't show it
         label_text = Logic.short_lines(german_word)
-        label = QLabel(label_text, alignment=Qt.AlignmentFlag.AlignCenter)
-        label.setObjectName("card")
-        label.setFixedSize(card_width, 300)
+        label = FlipCard(label_text, "card", card_width, 300)
 
-        button_translate = GUI._button('Show Translation', width=card_width)
         button_end_training = GUI._button('End Training', "secondary", width=card_width)
         button_next_vok = GUI._button('Next Vocabulary', width=card_width)
 
-        layout.addWidget(GUI._hint('German → Dutch'), alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(GUI._hint('German → Dutch · click the card to flip it'), alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(label)
-        layout.addWidget(button_translate)
         layout.addWidget(button_end_training)
 
-        # Connect button clicks to their respective functions
-        button_translate.clicked.connect(show_translation)
+        # Connect clicks to their respective functions
+        label.clicked.connect(show_translation)
         button_end_training.clicked.connect(self.end_training)
         button_next_vok.clicked.connect(next_vocab)
 
@@ -1553,15 +1615,13 @@ class GUI:
             else:
                 label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
                 direction = "German -> Dutch"
-            label.setText(label_text)
+            label.flip_to(label_text)
 
             if not slider_added:
                 # replace "End Training" with the rating slider and "Next Vocabulary"
                 layout.removeWidget(button_end_training)
                 button_end_training.hide()
                 button_end_training.deleteLater()
-                button_translate.setText('Flip Card')
-                GUI._set_variant(button_translate, "secondary")
                 layout.addWidget(self._rating_widget(card_width))
                 layout.addWidget(button_next_vok)
                 slider_added = True
@@ -1608,21 +1668,17 @@ class GUI:
         else:
             label_text = Logic.short_lines(correct_translation)
             mode_text = 'German → Dutch'
-        label = QLabel(label_text, alignment=Qt.AlignmentFlag.AlignCenter)
-        label.setObjectName("card")
-        label.setFixedSize(card_width, 300)
+        label = FlipCard(label_text, "card", card_width, 300)
 
-        button_translate = GUI._button('Show Translation', width=card_width)
         button_end_training = GUI._button('End Training', "secondary", width=card_width)
         button_next_vok = GUI._button('Next Vocabulary', width=card_width)
 
-        layout.addWidget(GUI._hint(f'Random · {mode_text}'), alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(GUI._hint(f'Random · {mode_text} · click the card to flip it'), alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(label)
-        layout.addWidget(button_translate)
         layout.addWidget(button_end_training)
 
-        # Connect button clicks to their respective functions
-        button_translate.clicked.connect(show_translation)
+        # Connect clicks to their respective functions
+        label.clicked.connect(show_translation)
         button_end_training.clicked.connect(self.end_training)
         button_next_vok.clicked.connect(next_vocab)
 
@@ -1642,22 +1698,20 @@ class GUI:
                 label_text = Logic.short_lines(correct_translation, pixel=800)
             else:
                 label_text = Logic.short_lines(dutch_word, pixel=800)+"\n"+phonetics
-            label.setText(label_text)
+            label.flip_to(label_text)
 
-            # change the label for the ai sentence (second QLabel)
+            # change the label for the ai sentence (second card)
             if label_text_ai == Logic.short_lines(ai_sentence, pixel=800):
                 label_text_ai = Logic.short_lines(ai_sentence_translation, pixel=800)
             else:
                 label_text_ai = Logic.short_lines(ai_sentence, pixel=800)
-            label_ai_sentence.setText(label_text_ai)
+            label_ai_sentence.flip_to(label_text_ai)
 
             if not slider_added:
                 # replace "End Training" with the rating slider and "Next Vocabulary"
                 layout.removeWidget(button_end_training)
                 button_end_training.hide()
                 button_end_training.deleteLater()
-                button_translate.setText('Flip Cards')
-                GUI._set_variant(button_translate, "secondary")
                 layout.addWidget(self._rating_widget(card_width))
                 layout.addWidget(button_next_vok)
                 slider_added = True
@@ -1694,9 +1748,7 @@ class GUI:
         dutch_word, correct_translation, phonetics, vocab_nr = Logic.ask_question()
 
         label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
-        label = QLabel(label_text, alignment=Qt.AlignmentFlag.AlignCenter)
-        label.setObjectName("card")
-        label.setFixedSize(card_width, 180)
+        label = FlipCard(label_text, "card", card_width, 180)
 
         # generate data with AI
         ai_sentence = AiApi.generate_AI_sentence(dutch_word, aiapi.OpenAiClient)
@@ -1705,24 +1757,21 @@ class GUI:
 
         # Create second Qlabel, which will show the AI sentence
         label_text_ai = Logic.short_lines(ai_sentence, pixel=800)
-        label_ai_sentence = QLabel(label_text_ai, alignment=Qt.AlignmentFlag.AlignCenter)
-        label_ai_sentence.setObjectName("sentenceCard")
-        label_ai_sentence.setFixedSize(card_width, 260)
+        label_ai_sentence = FlipCard(label_text_ai, "sentenceCard", card_width, 260)
 
-        button_translate = GUI._button('Show Translation', width=card_width)
         button_play_sound = GUI._button('▶  Play Sound', "secondary", width=card_width)
         button_end_training = GUI._button('End Training', "secondary", width=card_width)
         button_next_vok = GUI._button('Next Vocabulary', width=card_width)
 
-        layout.addWidget(GUI._hint('AI Sentences · Dutch → German'), alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(GUI._hint('AI Sentences · Dutch → German · click a card to flip both'), alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(label)
         layout.addWidget(label_ai_sentence)
-        layout.addWidget(button_translate)
         layout.addWidget(button_play_sound)
         layout.addWidget(button_end_training)
 
-        # Connect button clicks to their respective functions
-        button_translate.clicked.connect(show_translation)
+        # Connect clicks to their respective functions
+        label.clicked.connect(show_translation)
+        label_ai_sentence.clicked.connect(show_translation)
         button_end_training.clicked.connect(self.end_training)
         button_next_vok.clicked.connect(next_vocab)
         button_play_sound.clicked.connect(lambda: AiApi.text_to_speech(ai_sentence, aiapi.OpenAiClient, logic.voice_model))
