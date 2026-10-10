@@ -13,9 +13,9 @@ import random
 import sys
 import time
 from pygame import mixer
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QSlider, QTableView, QTableWidget, QTableWidgetItem, QLineEdit, QComboBox, QMessageBox, QHeaderView, QAbstractItemView, QFrame, QGridLayout, QStackedWidget, QButtonGroup, QToolTip
-from PyQt6.QtGui import QFont, QColor, QPainter, QPainterPath, QPen, QFontMetrics
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QCoreApplication, QSortFilterProxyModel, QRectF
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QSlider, QTableView, QTableWidget, QTableWidgetItem, QLineEdit, QComboBox, QMessageBox, QHeaderView, QAbstractItemView, QFrame, QGridLayout, QStackedWidget, QButtonGroup, QToolTip, QGraphicsOpacityEffect
+from PyQt6.QtGui import QFont, QColor, QPainter, QPainterPath, QPen, QFontMetrics, QLinearGradient, QRadialGradient
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QCoreApplication, QSortFilterProxyModel, QRectF, QPointF, QTimer, QElapsedTimer, QEvent, QPropertyAnimation, QEasingCurve
 import openpyxl
 
 # MODULE IMPORTS
@@ -35,6 +35,11 @@ def score_color(points: float) -> str:
 # chart colors (validated for CVD separation and >= 3:1 contrast on the white chart panels)
 CHART_BLUE = "#2A78D6"   # single series / words added
 CHART_RED = "#E34948"    # words removed
+
+# BRAND
+
+APP_NAME = "Taalbrug"   # Dutch for "language bridge": taal = language, brug = bridge
+APP_TAGLINE = "Your bridge from Dutch to German"
 
 # CLASSES
 
@@ -240,6 +245,207 @@ class BarChart(QWidget):
         self._hover = None
         QToolTip.hideText()
         self.update()
+
+class SplashOverlay(QWidget):
+    """
+    Animated brand intro drawn on top of the main window. Two flash cards ("brug" / "Brücke") fly in,
+    a bridge arc is drawn between them and a spark crosses it, then the wordmark appears letter by letter.
+    Afterwards the overlay fades out and reveals the main menu underneath. A click or key press skips it.
+    """
+    CARD_WIDTH, CARD_HEIGHT = 150, 190
+    CARDS_END = 750           # ms: cards have landed
+    BRIDGE = (550, 1250)      # ms: bridge arc is drawn
+    SPARK = (1150, 1850)      # ms: spark travels across the bridge
+    WORDMARK_START = 1250     # ms: first letter of the wordmark starts to appear
+    TAGLINE = (2000, 2450)    # ms: tagline fades in
+    HOLD_UNTIL = 4300         # ms: start fading out (complete logo stays ~1.8 s)
+    FADE_DURATION = 900       # ms
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._clock = QElapsedTimer()
+        self._clock.start()
+        self._fading = False
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(16)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        parent.installEventFilter(self)
+        self.setGeometry(parent.rect())
+        self.raise_()
+        self.show()
+        self.setFocus()
+
+    # easing helpers (t in 0..1)
+    @staticmethod
+    def _progress(elapsed: float, start: float, end: float) -> float:
+        return min(max((elapsed - start) / (end - start), 0.0), 1.0)
+
+    @staticmethod
+    def _ease_out_cubic(t: float) -> float:
+        return 1 - (1 - t) ** 3
+
+    @staticmethod
+    def _ease_out_back(t: float) -> float:
+        c1 = 1.4
+        return 1 + (c1 + 1) * (t - 1) ** 3 + c1 * (t - 1) ** 2
+
+    def elapsed(self) -> float:
+        return self._clock.elapsed()
+
+    def eventFilter(self, watched, event) -> bool:
+        # keep covering the whole window when it is resized (e.g. maximized after start)
+        if watched is self.parent() and event.type() == QEvent.Type.Resize:
+            self.setGeometry(self.parent().rect())
+        return False
+
+    def mousePressEvent(self, event) -> None:
+        self._fade_out()
+
+    def keyPressEvent(self, event) -> None:
+        self._fade_out()
+
+    def _tick(self) -> None:
+        if not self._fading and self.elapsed() >= SplashOverlay.HOLD_UNTIL:
+            self._fade_out()
+        self.update()
+
+    def _fade_out(self) -> None:
+        if self._fading:
+            return
+        self._fading = True
+        effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(effect)
+        self._fade = QPropertyAnimation(effect, b"opacity", self)
+        self._fade.setDuration(SplashOverlay.FADE_DURATION)
+        self._fade.setStartValue(1.0)
+        self._fade.setEndValue(0.0)
+        self._fade.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._fade.finished.connect(self._finish)
+        self._fade.start()
+
+    def _finish(self) -> None:
+        self._timer.stop()
+        self.parent().removeEventFilter(self)
+        self.hide()
+        self.deleteLater()
+
+    def _draw_card(self, painter: QPainter, center: QPointF, angle: float, language: str, word: str, opacity: float) -> None:
+        w, h = SplashOverlay.CARD_WIDTH, SplashOverlay.CARD_HEIGHT
+        painter.save()
+        painter.setOpacity(opacity)
+        painter.translate(center)
+        painter.rotate(angle)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 70))
+        painter.drawRoundedRect(QRectF(-w / 2 + 4, -h / 2 + 12, w, h), 18, 18)  # shadow
+        painter.setBrush(QColor("#FFFFFF"))
+        painter.drawRoundedRect(QRectF(-w / 2, -h / 2, w, h), 18, 18)
+        font = QFont("Segoe UI")
+        font.setPixelSize(13)
+        font.setWeight(QFont.Weight.Bold)
+        painter.setFont(font)
+        painter.setPen(QColor("#6366F1"))
+        painter.drawText(QRectF(-w / 2 + 16, -h / 2 + 12, w - 32, 20), Qt.AlignmentFlag.AlignLeft, language)
+        font.setPixelSize(26)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(QColor("#111827"))
+        painter.drawText(QRectF(-w / 2, -h / 2, w, h), Qt.AlignmentFlag.AlignCenter, word)
+        painter.restore()
+
+    @staticmethod
+    def _card_top(center: QPointF, angle: float) -> QPointF:
+        """Top-center point of a card rotated by angle around its center."""
+        radians = math.radians(angle)
+        dy = -SplashOverlay.CARD_HEIGHT / 2 - 8
+        return QPointF(center.x() - dy * math.sin(radians), center.y() + dy * math.cos(radians))
+
+    def paintEvent(self, event) -> None:
+        t = self.elapsed()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        w, h = self.width(), self.height()
+        cx, cy = w / 2, h / 2 - 60
+
+        # background: deep indigo gradient with a soft glow that grows behind the logo
+        background = QLinearGradient(0, 0, w, h)
+        background.setColorAt(0, QColor("#1E1B4B"))
+        background.setColorAt(1, QColor("#3730A3"))
+        painter.fillRect(self.rect(), background)
+        glow_radius = 160 + 220 * SplashOverlay._ease_out_cubic(SplashOverlay._progress(t, 0, 1500))
+        glow = QRadialGradient(QPointF(cx, cy), glow_radius)
+        glow.setColorAt(0, QColor(129, 140, 248, 90))
+        glow.setColorAt(1, QColor(129, 140, 248, 0))
+        painter.fillRect(self.rect(), glow)
+
+        # cards fly in from both sides and settle slightly tilted
+        landing = SplashOverlay._progress(t, 0, SplashOverlay.CARDS_END)
+        travel = SplashOverlay._ease_out_back(landing)
+        offset = 110 + (1 - travel) * (w / 2)
+        left_center, left_angle = QPointF(cx - offset, cy), -8 - 22 * (1 - travel)
+        right_center, right_angle = QPointF(cx + offset, cy), 8 + 22 * (1 - travel)
+        card_opacity = min(landing * 2, 1.0)
+        self._draw_card(painter, left_center, left_angle, "NL", "brug", card_opacity)
+        self._draw_card(painter, right_center, right_angle, "DE", "Brücke", card_opacity)
+
+        # bridge arc between the card tops, drawn progressively
+        start, end = SplashOverlay._card_top(left_center, left_angle), SplashOverlay._card_top(right_center, right_angle)
+        arc = QPainterPath(start)
+        arc.quadTo(QPointF(cx, min(start.y(), end.y()) - 120), end)
+        drawn = SplashOverlay._ease_out_cubic(SplashOverlay._progress(t, *SplashOverlay.BRIDGE))
+        if drawn > 0:
+            # a single dash as long as the drawn part of the arc (dash pattern is in pen-width units)
+            pen_width = 5
+            pen = QPen(QColor("#A5B4FC"), pen_width, Qt.PenStyle.CustomDashLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            pen.setDashPattern([max(arc.length() * drawn / pen_width, 0.01), 100000])
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(arc)
+
+        # spark crosses the bridge (a word travelling from Dutch to German)
+        spark = SplashOverlay._progress(t, *SplashOverlay.SPARK)
+        if 0 < spark < 1:
+            position = arc.pointAtPercent(SplashOverlay._ease_out_cubic(spark) if spark < 1 else 1)
+            fade = math.sin(spark * math.pi)
+            spark_glow = QRadialGradient(position, 22)
+            spark_glow.setColorAt(0, QColor(251, 191, 36, int(200 * fade)))
+            spark_glow.setColorAt(1, QColor(251, 191, 36, 0))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(spark_glow)
+            painter.drawEllipse(position, 22, 22)
+            painter.setBrush(QColor(255, 236, 179, int(255 * fade)))
+            painter.drawEllipse(position, 5, 5)
+
+        # wordmark "Taalbrug", letter by letter: "Taal" light, "brug" bold in the accent color
+        font = QFont("Segoe UI")
+        font.setPixelSize(64)
+        letters = []
+        for i, letter in enumerate(APP_NAME):
+            font.setWeight(QFont.Weight.Light if i < 4 else QFont.Weight.Bold)
+            letters.append((letter, QFont(font), QFontMetrics(font).horizontalAdvance(letter)))
+        x = cx - sum(advance for _, _, advance in letters) / 2
+        baseline = cy + SplashOverlay.CARD_HEIGHT / 2 + 110
+        for i, (letter, letter_font, advance) in enumerate(letters):
+            appear = SplashOverlay._ease_out_cubic(SplashOverlay._progress(t, SplashOverlay.WORDMARK_START + i * 70, SplashOverlay.WORDMARK_START + i * 70 + 380))
+            if appear > 0:
+                painter.setOpacity(appear)
+                painter.setFont(letter_font)
+                painter.setPen(QColor("#FFFFFF") if i < 4 else QColor("#A5B4FC"))
+                painter.drawText(QPointF(x, baseline + 18 * (1 - appear)), letter)
+            x += advance
+
+        # tagline
+        tagline = SplashOverlay._progress(t, *SplashOverlay.TAGLINE)
+        if tagline > 0:
+            painter.setOpacity(tagline)
+            font.setPixelSize(17)
+            font.setWeight(QFont.Weight.Normal)
+            painter.setFont(font)
+            painter.setPen(QColor("#C7D2FE"))
+            painter.drawText(QRectF(0, baseline + 22, w, 30), Qt.AlignmentFlag.AlignCenter, APP_TAGLINE)
+        painter.end()
 
 class Data:
     """A class to handle (load, save, manipulate) the data of the vocabulary"""
@@ -932,6 +1138,8 @@ class GUI:
         self.app.setStyleSheet(GUI.STYLESHEET.replace("{CHEVRON_DOWN}", chevron_path))
         self.window = QMainWindow()
         self.start_main_menu()
+        # animated brand intro on top of the main menu; fades out by itself
+        self.splash = SplashOverlay(self.window)
 
     # LAYOUT HELPERS
 
@@ -1052,7 +1260,7 @@ class GUI:
         """Set up the main menu as part of the GUI."""
         layout = self._new_page()
 
-        layout.addLayout(GUI._title_block('Vocabulary Trainer', 'Dutch ↔ German'))
+        layout.addLayout(GUI._title_block(f'{APP_NAME[:4]}<span style="font-weight:600; color:#4F46E5;">{APP_NAME[4:]}</span>', 'Dutch ↔ German vocabulary trainer'))
         layout.addSpacing(30)
 
         button_width = 300
@@ -1073,7 +1281,7 @@ class GUI:
         self.manage_vocabulary_button.clicked.connect(self.manage_vocabulary)
         self.exit_button.clicked.connect(QApplication.instance().quit)
 
-        self.window.setWindowTitle('Vocabulary Trainer')
+        self.window.setWindowTitle(APP_NAME)
         self.window.showMaximized()
 
     def select_training_type(self) -> None:

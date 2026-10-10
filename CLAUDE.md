@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A Dutch-German vocabulary trainer desktop app built with PyQt6. Users train vocabulary via a slider-based scoring system, with AI-powered sentence generation and text-to-speech via the OpenAI API.
+**Taalbrug** (Dutch for "language bridge"; constants `APP_NAME` / `APP_TAGLINE`) is a Dutch-German vocabulary trainer desktop app built with PyQt6. Users train vocabulary via a slider-based scoring system, with AI-powered sentence generation and text-to-speech via the OpenAI API.
 
 ## Running the App
 
@@ -31,6 +31,7 @@ Everything lives in a single file: `app_main.py`. There are no tests. The app us
 - **`AiApi`** — OpenAI API wrapper for sentence generation (`gpt-4o-mini`) and text-to-speech (`tts-1`).
 - **`Table`** — `QAbstractTableModel` subclass for the statistics table view.
 - **`BarChart`** — QPainter column chart (no charting dependency) used by the Activity tab of the statistics screen.
+- **`SplashOverlay`** — animated brand intro painted over the main window at startup (~4.3 s + fade, click/key skips), then fades out to reveal the main menu.
 
 ### Data Flow
 
