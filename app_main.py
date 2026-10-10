@@ -1074,6 +1074,11 @@ class GUI:
         QPushButton[variant="danger"]:pressed {
             background-color: $danger_pressed;
         }
+        QPushButton[compact="true"] {
+            padding: 4px 14px;
+            font-size: 13px;
+            border-radius: 8px;
+        }
 
         QFrame#segmentBar {
             background-color: $segment_bg;
@@ -1375,6 +1380,44 @@ class GUI:
         container.setFixedHeight(container.sizeHint().height())
         return container
 
+    def _training_header(self, hint: str, width: int) -> QWidget:
+        """Row above a training card: the mode hint on the left, a small red "End Training" button on the right."""
+        header = QWidget()
+        header.setFixedWidth(width)
+        row = QHBoxLayout(header)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(GUI._hint(hint))
+        row.addStretch()
+        button_end_training = GUI._button('End Training', "danger", height=32)
+        button_end_training.setProperty("compact", True)
+        button_end_training.clicked.connect(self.end_training)
+        row.addWidget(button_end_training)
+        header.setFixedHeight(header.sizeHint().height())
+        return header
+
+    def _answer_area(self, width: int, on_next) -> QStackedWidget:
+        """
+        Controls below a training card: empty before the first flip (page 0), the rating slider and
+        "Next Vocabulary" afterwards (page 1). The area is as tall as page 1 from the start, so the card keeps
+        its position when switching with setCurrentIndex(1).
+        """
+        before = QWidget()
+
+        after = QWidget()
+        after_layout = QVBoxLayout(after)
+        after_layout.setContentsMargins(0, 0, 0, 0)
+        after_layout.setSpacing(14)
+        after_layout.addWidget(self._rating_widget(width))
+        button_next_vok = GUI._button('Next Vocabulary', width=width)
+        button_next_vok.clicked.connect(on_next)
+        after_layout.addWidget(button_next_vok)
+
+        area = QStackedWidget()
+        area.addWidget(before)
+        area.addWidget(after)
+        area.setFixedSize(width, after.sizeHint().height())
+        return area
+
     @staticmethod
     def _style_table(table: QTableView) -> None:
         """Apply the common look of all tables: no grid, zebra rows, comfortable row height."""
@@ -1461,26 +1504,18 @@ class GUI:
     def start_dutch_german(self) -> None:
         """Set up the training screen for Dutch -> German translations."""
         logic.modus = "DG" # change the modus to DG
-        slider_added = False # boolean to check if a slider was already added
 
         def show_translation() -> None:
             """Show the translation of the Dutch word and add a slider to evaluate how well the translation was known."""
             nonlocal label_text
-            nonlocal slider_added
             if label_text == Logic.short_lines(dutch_word)+"\n"+phonetics:
                 label_text = Logic.short_lines(correct_translation)
             else:
                 label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
             label.flip_to(label_text)
 
-            if not slider_added:
-                # replace "End Training" with the rating slider and "Next Vocabulary"
-                layout.removeWidget(button_end_training)
-                button_end_training.hide()
-                button_end_training.deleteLater()
-                layout.addWidget(self._rating_widget(card_width))
-                layout.addWidget(button_next_vok)
-                slider_added = True
+            # show the rating slider and "Next Vocabulary" (no-op after the first flip)
+            answer_area.setCurrentIndex(1)
 
         def next_vocab() -> None:
             """Save the statistics and continue with the next vocabulary."""
@@ -1515,40 +1550,29 @@ class GUI:
         label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
         label = FlipCard(label_text, "card", card_width, 300)
 
-        button_end_training = GUI._button('End Training', "secondary", width=card_width)
-        button_next_vok = GUI._button('Next Vocabulary', width=card_width)
 
-        layout.addWidget(GUI._hint('Dutch → German · click the card to flip it'), alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self._training_header('Dutch → German · click the card to flip it', card_width))
         layout.addWidget(label)
-        layout.addWidget(button_end_training)
+        answer_area = self._answer_area(card_width, next_vocab)
+        layout.addWidget(answer_area)
 
         label.clicked.connect(show_translation)
-        button_end_training.clicked.connect(self.end_training)
-        button_next_vok.clicked.connect(next_vocab)
 
     def start_german_dutch(self) -> None:
         """Set up the training screen for German -> Dutch translations."""
         logic.modus = "GD" # change the modus to GD
-        slider_added = False # boolean to check if a slider was already added
 
         # show translation of the word; make slider visible
         def show_translation():
             nonlocal label_text
-            nonlocal slider_added
             if label_text == Logic.short_lines(dutch_word)+"\n"+phonetics:
                 label_text = Logic.short_lines(german_word)
             else:
                 label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
             label.flip_to(label_text)
 
-            if not slider_added:
-                # replace "End Training" with the rating slider and "Next Vocabulary"
-                layout.removeWidget(button_end_training)
-                button_end_training.hide()
-                button_end_training.deleteLater()
-                layout.addWidget(self._rating_widget(card_width))
-                layout.addWidget(button_next_vok)
-                slider_added = True
+            # show the rating slider and "Next Vocabulary" (no-op after the first flip)
+            answer_area.setCurrentIndex(1)
 
         # save the statistics and continue with next word
         def next_vocab():
@@ -1586,28 +1610,23 @@ class GUI:
         label_text = Logic.short_lines(german_word)
         label = FlipCard(label_text, "card", card_width, 300)
 
-        button_end_training = GUI._button('End Training', "secondary", width=card_width)
-        button_next_vok = GUI._button('Next Vocabulary', width=card_width)
 
-        layout.addWidget(GUI._hint('German → Dutch · click the card to flip it'), alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self._training_header('German → Dutch · click the card to flip it', card_width))
         layout.addWidget(label)
-        layout.addWidget(button_end_training)
+        answer_area = self._answer_area(card_width, next_vocab)
+        layout.addWidget(answer_area)
 
         # Connect clicks to their respective functions
         label.clicked.connect(show_translation)
-        button_end_training.clicked.connect(self.end_training)
-        button_next_vok.clicked.connect(next_vocab)
 
     def start_random(self) -> None:
         """Set up the training screen for random translations."""
         logic.modus = "RA" # change the modus to RA
-        slider_added = False # boolean to check if a slider was already added
         direction = ""
 
         def show_translation() -> None:
             """Show the translation of the Dutch word and add a slider to evaluate how well the translation was known."""
             nonlocal label_text
-            nonlocal slider_added
             nonlocal direction
             if label_text == Logic.short_lines(dutch_word)+"\n"+phonetics:
                 label_text = Logic.short_lines(correct_translation)
@@ -1617,14 +1636,8 @@ class GUI:
                 direction = "German -> Dutch"
             label.flip_to(label_text)
 
-            if not slider_added:
-                # replace "End Training" with the rating slider and "Next Vocabulary"
-                layout.removeWidget(button_end_training)
-                button_end_training.hide()
-                button_end_training.deleteLater()
-                layout.addWidget(self._rating_widget(card_width))
-                layout.addWidget(button_next_vok)
-                slider_added = True
+            # show the rating slider and "Next Vocabulary" (no-op after the first flip)
+            answer_area.setCurrentIndex(1)
 
         def next_vocab() -> None:
             """Save the statistics and continue with the next vocabulary."""
@@ -1670,28 +1683,23 @@ class GUI:
             mode_text = 'German → Dutch'
         label = FlipCard(label_text, "card", card_width, 300)
 
-        button_end_training = GUI._button('End Training', "secondary", width=card_width)
-        button_next_vok = GUI._button('Next Vocabulary', width=card_width)
 
-        layout.addWidget(GUI._hint(f'Random · {mode_text} · click the card to flip it'), alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self._training_header(f'Random · {mode_text} · click the card to flip it', card_width))
         layout.addWidget(label)
-        layout.addWidget(button_end_training)
+        answer_area = self._answer_area(card_width, next_vocab)
+        layout.addWidget(answer_area)
 
         # Connect clicks to their respective functions
         label.clicked.connect(show_translation)
-        button_end_training.clicked.connect(self.end_training)
-        button_next_vok.clicked.connect(next_vocab)
 
     def start_ai_sentences(self) -> None:
         """Set up the training screen for AI generated sentences."""
         logic.modus = "AI" # change the modus to AI
-        slider_added = False # boolean to check if a slider was already added
 
         def show_translation() -> None:
             """Show the translation of the Dutch word and add a slider to evaluate how well the translation was known."""
             nonlocal label_text
             nonlocal label_text_ai
-            nonlocal slider_added
 
             # change the label for the vocabulary (first QLabel)
             if label_text == Logic.short_lines(dutch_word, pixel=800)+"\n"+phonetics:
@@ -1707,14 +1715,8 @@ class GUI:
                 label_text_ai = Logic.short_lines(ai_sentence, pixel=800)
             label_ai_sentence.flip_to(label_text_ai)
 
-            if not slider_added:
-                # replace "End Training" with the rating slider and "Next Vocabulary"
-                layout.removeWidget(button_end_training)
-                button_end_training.hide()
-                button_end_training.deleteLater()
-                layout.addWidget(self._rating_widget(card_width))
-                layout.addWidget(button_next_vok)
-                slider_added = True
+            # show the rating slider and "Next Vocabulary" (no-op after the first flip)
+            answer_area.setCurrentIndex(1)
 
         def next_vocab() -> None:
             """Save the statistics and continue with the next vocabulary."""
@@ -1760,20 +1762,17 @@ class GUI:
         label_ai_sentence = FlipCard(label_text_ai, "sentenceCard", card_width, 260)
 
         button_play_sound = GUI._button('▶  Play Sound', "secondary", width=card_width)
-        button_end_training = GUI._button('End Training', "secondary", width=card_width)
-        button_next_vok = GUI._button('Next Vocabulary', width=card_width)
 
-        layout.addWidget(GUI._hint('AI Sentences · Dutch → German · click a card to flip both'), alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self._training_header('AI Sentences · Dutch → German · click a card to flip both', card_width))
         layout.addWidget(label)
         layout.addWidget(label_ai_sentence)
         layout.addWidget(button_play_sound)
-        layout.addWidget(button_end_training)
+        answer_area = self._answer_area(card_width, next_vocab)
+        layout.addWidget(answer_area)
 
         # Connect clicks to their respective functions
         label.clicked.connect(show_translation)
         label_ai_sentence.clicked.connect(show_translation)
-        button_end_training.clicked.connect(self.end_training)
-        button_next_vok.clicked.connect(next_vocab)
         button_play_sound.clicked.connect(lambda: AiApi.text_to_speech(ai_sentence, aiapi.OpenAiClient, logic.voice_model))
 
     def start_advanced_mode(self) -> None:
