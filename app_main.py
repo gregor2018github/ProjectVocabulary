@@ -276,6 +276,84 @@ class BarChart(QWidget):
         QToolTip.hideText()
         self.update()
 
+class LineChart(BarChart):
+    """
+    Line chart for scores (fixed 0–100 axis) drawn with QPainter, one line per series. Points sit at the
+    column centers of the BarChart layout and reuse its hover handling: hovering a column shows a crosshair
+    and its tooltip. Missing values (None) are skipped and the line connects the neighbouring points.
+    """
+
+    def __init__(self, labels: list, tooltips: list, series: list, empty_text: str = "No answers in this period") -> None:
+        """`series` is a list of (values, color) pairs; values may contain None."""
+        super().__init__(labels, tooltips, [0] * len(labels), "", empty_text=empty_text)
+        self._series = [(values, QColor(color)) for values, color in series]
+
+    def _layout(self) -> tuple:
+        left, top, right, bottom = BarChart.MARGINS
+        plot = QRectF(left, top, self.width() - left - right, self.height() - top - bottom)
+        scale = plot.height() / 100
+        slot = plot.width() / max(len(self._labels), 1)
+        return plot, plot.bottom(), scale, slot
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        plot, baseline_y, scale, slot = self._layout()
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+
+        # gridlines and y labels
+        for value in range(0, 101, 20):
+            y = baseline_y - value * scale
+            painter.setPen(QPen(QColor(THEME["chart_baseline"] if value == 0 else THEME["chart_grid"]), 1))
+            painter.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
+            painter.setPen(QColor(THEME["chart_label"]))
+            painter.drawText(QRectF(0, y - 8, plot.left() - 8, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(value))
+
+        # crosshair at the hovered column
+        if self._hover is not None:
+            x = plot.left() + (self._hover + 0.5) * slot
+            painter.setPen(QPen(QColor(THEME["chart_baseline"]), 1))
+            painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
+
+        # lines (2px), then markers with a 2px surface ring; markers on every point only if there is room
+        show_all_markers = slot >= 14
+        for values, color in self._series:
+            points = [(i, QPointF(plot.left() + (i + 0.5) * slot, baseline_y - value * scale))
+                      for i, value in enumerate(values) if value is not None]
+            if len(points) > 1:
+                path = QPainterPath(points[0][1])
+                for _, point in points[1:]:
+                    path.lineTo(point)
+                pen = QPen(color, 2)
+                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPath(path)
+            painter.setPen(QPen(QColor(THEME["surface"]), 2))
+            painter.setBrush(color)
+            for i, point in points:
+                if show_all_markers or len(points) == 1 or i == self._hover:
+                    radius = 5 if i == self._hover else 4
+                    painter.drawEllipse(point, radius, radius)
+
+        # x labels: only every n-th label, so that they never collide
+        painter.setPen(QColor(THEME["chart_label"]))
+        label_width = max((metrics.horizontalAdvance(label) for label in self._labels), default=0) + 14
+        every = max(1, math.ceil(label_width / slot))
+        for i in range(0, len(self._labels), every):
+            center = plot.left() + (i + 0.5) * slot
+            painter.drawText(QRectF(center - label_width / 2, plot.bottom() + 6, label_width, 16), Qt.AlignmentFlag.AlignCenter, self._labels[i])
+
+        if not any(value is not None for values, _ in self._series for value in values):
+            font.setPixelSize(13)
+            painter.setFont(font)
+            painter.drawText(plot, Qt.AlignmentFlag.AlignCenter, self._empty_text)
+        painter.end()
+
 class FlipCard(QLabel):
     """
     Vocabulary card that emits `clicked` when pressed and turns over with a 3D flip animation in flip_to().
@@ -762,8 +840,12 @@ class Data:
             event       TEXT    NOT NULL,   -- 'app_start' | 'trained' | 'added' | 'deleted'
             vocab_id    INTEGER,
             mode        TEXT,               -- training mode (DG, GD, RA, AI) for 'trained'
-            points      INTEGER             -- slider value for 'trained'
+            points      INTEGER,            -- slider value for 'trained'
+            direction   TEXT                -- translation direction (DG, GD) for 'trained'
         )''')
+        # databases created before the direction column existed get it added (old rows stay NULL)
+        if 'direction' not in [row[1] for row in conn.execute('PRAGMA table_info(activity_log)')]:
+            conn.execute('ALTER TABLE activity_log ADD COLUMN direction TEXT')
         # user preferences as key/value pairs (e.g. 'theme')
         conn.execute('''CREATE TABLE IF NOT EXISTS settings (
             key         TEXT PRIMARY KEY,
@@ -919,12 +1001,13 @@ class Data:
         Data.german_voc_list[idx] = german
         Data.phonetics_list[idx] = note
 
-    def log_activity(event: str, vocab_id: int | None = None, mode: str | None = None, points: int | None = None) -> None:
+    def log_activity(event: str, vocab_id: int | None = None, mode: str | None = None, points: int | None = None,
+                     direction: str | None = None) -> None:
         """Append an event ('app_start', 'trained', 'added', 'deleted') to the activity log."""
         conn = sqlite3.connect(config.DB_FILE)
         conn.execute(
-            'INSERT INTO activity_log (timestamp, event, vocab_id, mode, points) VALUES (?,?,?,?,?)',
-            (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), event, vocab_id, mode, points)
+            'INSERT INTO activity_log (timestamp, event, vocab_id, mode, points, direction) VALUES (?,?,?,?,?,?)',
+            (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), event, vocab_id, mode, points, direction)
         )
         conn.commit()
         conn.close()
@@ -943,14 +1026,19 @@ class Data:
         conn.close()
 
     def load_activity(since: datetime.date) -> list:
-        """Return all logged events since the given date as (datetime, event, points) tuples, oldest first."""
+        """
+        Return all logged events since the given date as (datetime, event, points, direction) tuples, oldest first.
+        Rows logged before the direction column existed take it from the mode; for random mode it stays None.
+        """
         conn = sqlite3.connect(config.DB_FILE)
         rows = conn.execute(
-            'SELECT timestamp, event, points FROM activity_log WHERE timestamp >= ? ORDER BY timestamp',
+            '''SELECT timestamp, event, points,
+                      COALESCE(direction, CASE mode WHEN 'DG' THEN 'DG' WHEN 'AI' THEN 'DG' WHEN 'GD' THEN 'GD' END)
+               FROM activity_log WHERE timestamp >= ? ORDER BY timestamp''',
             (since.isoformat(),)
         ).fetchall()
         conn.close()
-        return [(datetime.datetime.strptime(ts, "%Y-%m-%d %H:%M:%S"), event, points) for ts, event, points in rows]
+        return [(datetime.datetime.strptime(ts, "%Y-%m-%d %H:%M:%S"), event, points, direction) for ts, event, points, direction in rows]
 
     def load_training_days() -> set:
         """Return the set of all dates on which at least one word was trained."""
@@ -1536,7 +1624,7 @@ class GUI:
 
             # save statistics
             Data.save_row_sqlite(vocab_nr)
-            Data.log_activity("trained", Data.id_list[vocab_nr], logic.modus, self.slider.value())
+            Data.log_activity("trained", Data.id_list[vocab_nr], logic.modus, self.slider.value(), "DG")
             # ask for a new vocab
             GUI.start_dutch_german(self)
 
@@ -1593,7 +1681,7 @@ class GUI:
 
             # save statistics
             Data.save_row_sqlite(vocab_nr)
-            Data.log_activity("trained", Data.id_list[vocab_nr], logic.modus, self.slider.value())
+            Data.log_activity("trained", Data.id_list[vocab_nr], logic.modus, self.slider.value(), "GD")
             # ask for a new vocab
             GUI.start_german_dutch(self)
 
@@ -1622,18 +1710,14 @@ class GUI:
     def start_random(self) -> None:
         """Set up the training screen for random translations."""
         logic.modus = "RA" # change the modus to RA
-        direction = ""
 
         def show_translation() -> None:
             """Show the translation of the Dutch word and add a slider to evaluate how well the translation was known."""
             nonlocal label_text
-            nonlocal direction
             if label_text == Logic.short_lines(dutch_word)+"\n"+phonetics:
                 label_text = Logic.short_lines(correct_translation)
-                direction = "Dutch -> German"
             else:
                 label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
-                direction = "German -> Dutch"
             label.flip_to(label_text)
 
             # show the rating slider and "Next Vocabulary" (no-op after the first flip)
@@ -1662,7 +1746,7 @@ class GUI:
 
             # save statistics
             Data.save_row_sqlite(vocab_nr)
-            Data.log_activity("trained", Data.id_list[vocab_nr], logic.modus, self.slider.value())
+            Data.log_activity("trained", Data.id_list[vocab_nr], logic.modus, self.slider.value(), "DG" if direction == "Dutch -> German" else "GD")
             # ask for a new vocab
             GUI.start_random(self)
 
@@ -1678,9 +1762,11 @@ class GUI:
         if random.randint(0,1) == 0:
             label_text = Logic.short_lines(dutch_word)+"\n"+phonetics
             mode_text = 'Dutch → German'
+            direction = "Dutch -> German"  # fixed by the side shown first, so flipping back does not change it
         else:
             label_text = Logic.short_lines(correct_translation)
             mode_text = 'German → Dutch'
+            direction = "German -> Dutch"
         label = FlipCard(label_text, "card", card_width, 300)
 
 
@@ -1737,7 +1823,7 @@ class GUI:
 
             # save statistics
             Data.save_row_sqlite(vocab_nr)
-            Data.log_activity("trained", Data.id_list[vocab_nr], logic.modus, self.slider.value())
+            Data.log_activity("trained", Data.id_list[vocab_nr], logic.modus, self.slider.value(), "DG")
             # ask for a new vocab
             GUI.start_ai_sentences(self)
 
@@ -1978,6 +2064,64 @@ class GUI:
             layout.addWidget(GUI._hint(f"Activity is recorded since {data['tracking_since']:%d %b %Y}; training before that date is not included."))
         return view
 
+    def _scores_view(self, days: int) -> QWidget:
+        """Build the score dashboard (tiles + line charts per translation direction) for the last `days` days."""
+        data = Logic.create_activity_data(days)
+        view = QWidget()
+        layout = QVBoxLayout(view)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+        directions = [("DG", "Dutch → German", THEME["chart_blue"]), ("GD", "German → Dutch", THEME["chart_red"])]
+        legend = [(name, color) for _, name, color in directions]
+
+        # stat tiles: average score and number of answers per direction
+        tiles = QHBoxLayout()
+        tiles.setSpacing(14)
+        for key, name, _ in directions:
+            total, count = data["direction_totals"][key]
+            value = f"{total / count:.0f}" if count else "—"
+            tiles.addWidget(GUI._stat_tile(f"Avg score {name}", value, f"from {count} answer{'' if count == 1 else 's'}"), 1)
+        (dg_total, dg_count), (gd_total, gd_count) = data["direction_totals"]["DG"], data["direction_totals"]["GD"]
+        if dg_count and gd_count:
+            gap = dg_total / dg_count - gd_total / gd_count
+            stronger = "Dutch → German" if gap > 0 else "German → Dutch"
+            tiles.addWidget(GUI._stat_tile("Difference", f"{abs(gap):.0f} points", f"{stronger} is stronger" if round(gap) else "both directions equal"), 1)
+        else:
+            tiles.addWidget(GUI._stat_tile("Difference", "—", "needs answers in both directions"), 1)
+        layout.addLayout(tiles)
+
+        # tooltips list both directions for the hovered day / week
+        weekly = data["weekly"]
+        labels = [f"{bucket.day} {bucket:%b}" for bucket in data["buckets"]]
+        periods = [("Week of " if weekly else "") + f"{bucket:%a %d %b %Y}" for bucket in data["buckets"]]
+
+        def tooltips(values: dict, with_counts: bool) -> list:
+            result = []
+            for i, period in enumerate(periods):
+                lines = [period]
+                for key, name, _ in directions:
+                    value = values[key][i]
+                    text = f"{name}: {value:.0f}" if value is not None else f"{name}: —"
+                    if with_counts and value is not None:
+                        count = data["direction_counts"][key][i]
+                        text += f" ({count} answer{'' if count == 1 else 's'})"
+                    lines.append(text)
+                result.append("\n".join(lines))
+            return result
+
+        averages, running = data["direction_averages"], data["direction_running"]
+        average_chart = LineChart(labels, tooltips(averages, True), [(averages[key], color) for key, _, color in directions])
+        layout.addWidget(GUI._chart_panel(
+            "Average score", f"Mean rating per {'week' if weekly else 'day'} and direction · hover for details", average_chart, legend), 3)
+        running_chart = LineChart(labels, tooltips(running, False), [(running[key], color) for key, _, color in directions])
+        layout.addWidget(GUI._chart_panel(
+            "Running average", "Mean rating of all answers from the start of the period up to each point", running_chart, legend), 2)
+
+        if data["tracking_since"]:
+            layout.addWidget(GUI._hint(f"Scores are recorded since {data['tracking_since']:%d %b %Y}; "
+                                       "random-mode answers count only from the moment their direction was recorded."))
+        return view
+
     def explore_statistics(self) -> None:
         """Set up the statistics screen with an activity dashboard and the per-word table."""
         layout = self._new_page(centered=False)
@@ -1994,7 +2138,7 @@ class GUI:
         # toolbar: tabs on the left, range filter (activity) or search (words) on the right
         range_days = [7, 30, 90, 365]
         toolbar = QHBoxLayout()
-        tab_bar, tab_group = GUI._segmented(["Activity", "Words"])
+        tab_bar, tab_group = GUI._segmented(["Activity", "Scores", "Words"])
         range_bar, range_group = GUI._segmented(["7 days", "30 days", "90 days", "1 year"], checked=1)
         search_input = QLineEdit()
         search_input.setPlaceholderText("Search words…")
@@ -2044,20 +2188,24 @@ class GUI:
 
         stack = QStackedWidget()
         stack.addWidget(self._activity_view(range_days[1]))
+        stack.addWidget(self._scores_view(range_days[1]))
         stack.addWidget(table)
         layout.addWidget(stack, 1)
 
         def show_tab(index: int) -> None:
             stack.setCurrentIndex(index)
-            range_bar.setVisible(index == 0)
-            search_input.setVisible(index == 1)
+            range_bar.setVisible(index in (0, 1))
+            search_input.setVisible(index == 2)
 
         def show_range(index: int) -> None:
-            old_view = stack.widget(0)
-            stack.removeWidget(old_view)
-            old_view.deleteLater()
-            stack.insertWidget(0, self._activity_view(range_days[index]))
-            stack.setCurrentIndex(0)
+            # rebuild both dashboards for the new range, keeping the current tab
+            current = stack.currentIndex()
+            for position, build in ((0, self._activity_view), (1, self._scores_view)):
+                old_view = stack.widget(position)
+                stack.removeWidget(old_view)
+                old_view.deleteLater()
+                stack.insertWidget(position, build(range_days[index]))
+            stack.setCurrentIndex(current)
 
         show_tab(0)
         tab_group.idClicked.connect(show_tab)
@@ -2753,7 +2901,10 @@ class Logic:
         hours = [0] * 24
         active_days = set()
         trained_times = []
-        for timestamp, event, points in Data.load_activity(start):
+        # per translation direction: answers and point sums per bucket
+        direction_counts = {"DG": [0] * len(buckets), "GD": [0] * len(buckets)}
+        direction_sums = {"DG": [0] * len(buckets), "GD": [0] * len(buckets)}
+        for timestamp, event, points, direction in Data.load_activity(start):
             i = index[bucket_of(timestamp.date())]
             active_days.add(timestamp.date())
             if event == "trained":
@@ -2761,6 +2912,9 @@ class Logic:
                 points_sum[i] += points or 0
                 hours[timestamp.hour] += 1
                 trained_times.append(timestamp)
+                if direction in direction_counts:
+                    direction_counts[direction][i] += 1
+                    direction_sums[direction][i] += points or 0
             elif event == "added":
                 added[i] += 1
             elif event == "deleted":
@@ -2778,6 +2932,17 @@ class Logic:
             streak += 1
             day -= datetime.timedelta(days=1)
 
+        def averages(sums: list, counts: list) -> list:
+            return [total / count if count else None for total, count in zip(sums, counts)]
+
+        def running_averages(sums: list, counts: list) -> list:
+            """Average over all answers from the start of the period up to each bucket (None until the first answer)."""
+            result, total, count = [], 0, 0
+            for bucket_sum, bucket_count in zip(sums, counts):
+                total, count = total + bucket_sum, count + bucket_count
+                result.append(total / count if count else None)
+            return result
+
         return {
             "buckets": buckets,
             "weekly": weekly,
@@ -2790,6 +2955,10 @@ class Logic:
             "practice_seconds": practice_seconds,
             "streak": streak,
             "total_points": sum(points_sum),
+            "direction_counts": direction_counts,
+            "direction_averages": {d: averages(direction_sums[d], direction_counts[d]) for d in direction_counts},
+            "direction_running": {d: running_averages(direction_sums[d], direction_counts[d]) for d in direction_counts},
+            "direction_totals": {d: (sum(direction_sums[d]), sum(direction_counts[d])) for d in direction_counts},
             "tracking_since": Data.first_activity_date(),
         }
 
