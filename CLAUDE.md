@@ -40,6 +40,10 @@ Everything lives in a single file: `app_main.py`. There are no tests. The app us
 3. Statistics are persisted to JSON after each training answer.
 4. Usage is recorded in the `activity_log` SQLite table via `Data.log_activity()` (events: `app_start`, `trained`, `added`, `deleted`). There is no backfill — data from before tracking existed is deliberately ignored. `Logic.create_activity_data()` aggregates it for the charts.
 
+## App Icon
+
+`files/taalbrug.ico` / `taalbrug.png` are generated from the splash logo design by `make_icon.py` (needs Pillow). Re-run it after changing the design. `GUI.__init__` sets an explicit AppUserModelID so the Windows taskbar shows this icon instead of Python's.
+
 ## Config
 
 `config.py` holds path constants: `XLSX_FILE`, `JSON_FILE`, `MAIN_PATH`, `FILES_PATH`.

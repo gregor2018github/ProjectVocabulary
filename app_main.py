@@ -1,6 +1,7 @@
 
 # IMPORTS
 
+import ctypes
 import datetime
 import json
 import math
@@ -15,7 +16,7 @@ import sys
 import time
 from pygame import mixer
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QSlider, QTableView, QTableWidget, QTableWidgetItem, QLineEdit, QComboBox, QMessageBox, QHeaderView, QAbstractItemView, QFrame, QGridLayout, QStackedWidget, QButtonGroup, QToolTip, QGraphicsOpacityEffect
-from PyQt6.QtGui import QFont, QColor, QPainter, QPainterPath, QPen, QFontMetrics, QLinearGradient, QRadialGradient, QTransform
+from PyQt6.QtGui import QFont, QColor, QPainter, QPainterPath, QPen, QFontMetrics, QLinearGradient, QRadialGradient, QTransform, QIcon
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QCoreApplication, QSortFilterProxyModel, QRectF, QPointF, QTimer, QElapsedTimer, QEvent, QPropertyAnimation, QVariantAnimation, QEasingCurve, pyqtSignal
 import openpyxl
 
@@ -1349,7 +1350,12 @@ class GUI:
         # initialize the pygame mixer for playing sound files
         mixer.init()
 
+        # own taskbar identity, otherwise Windows groups the app under python.exe and shows its icon
+        if sys.platform == "win32":
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_NAME)
         self.app = QApplication([])
+        # app icon (generated from the startup logo by make_icon.py); absolute path because of os.chdir
+        self.app.setWindowIcon(QIcon(os.path.join(config.MAIN_PATH, config.FILES_PATH, "taalbrug.ico")))
         self.apply_theme(Data.load_setting("theme", "light"))
         self.window = QMainWindow()
         self.start_main_menu()
