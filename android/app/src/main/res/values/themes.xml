@@ -1,0 +1,7 @@
+<resources>
+    <!-- everything visible is drawn by Compose; the window background only shows while starting -->
+    <style name="Theme.Taalbrug" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/brand_dark</item>
+    </style>
+    <color name="brand_dark">#1E1B4B</color>
+</resources>

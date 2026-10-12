@@ -44,6 +44,15 @@ Everything lives in a single file: `app_main.py`. There are no tests. The app us
 
 `files/taalbrug.ico` / `taalbrug.png` are generated from the splash logo design by `make_icon.py` (needs Pillow). Re-run it after changing the design. `GUI.__init__` sets an explicit AppUserModelID so the Windows taskbar shows this icon instead of Python's.
 
+## Android App
+
+`android/` is a separate Kotlin + Jetpack Compose port (no AI features). Open that folder in Android Studio, or build with `android/gradlew assembleDebug`.
+
+- It uses the **same SQLite schema** as the desktop app (`Store.kt`), so `vocabulary.db` can be copied either way. Manage Vocabulary → ⋮ → Export/Import database.
+- At build time, `files/vocabulary.db` is copied into the APK assets and only used on the phone's first launch.
+- `Logic.kt` ports `choose_vocab` and `create_activity_data`. Keep both in sync with the desktop versions.
+- `make_icon.py` also writes the launcher icon layers into `android/app/src/main/res`.
+
 ## Config
 
 `config.py` holds path constants: `XLSX_FILE`, `JSON_FILE`, `MAIN_PATH`, `FILES_PATH`.

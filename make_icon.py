@@ -50,18 +50,19 @@ def draw_card(painter: QPainter, center: QPointF, angle: float, language: str, w
     painter.restore()
 
 
-def render(size: int) -> QImage:
-    image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+def new_painter(image: QImage, scale: float) -> QPainter:
     image.fill(Qt.GlobalColor.transparent)
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-    painter.scale(size / 256, size / 256)
-    detailed = size >= 128
+    painter.scale(scale, scale)
+    return painter
 
-    # rounded indigo tile with a soft glow behind the logo
+
+def draw_background(painter: QPainter, radius: float) -> None:
+    """Indigo tile with a soft glow behind the logo (radius 0 = full-bleed square)."""
     tile = QPainterPath()
-    tile.addRoundedRect(QRectF(0, 0, 256, 256), 56, 56)
+    tile.addRoundedRect(QRectF(0, 0, 256, 256), radius, radius)
     background = QLinearGradient(0, 0, 256, 256)
     background.setColorAt(0, QColor("#1E1B4B"))
     background.setColorAt(1, QColor("#3730A3"))
@@ -71,6 +72,9 @@ def render(size: int) -> QImage:
     glow.setColorAt(1, QColor(129, 140, 248, 0))
     painter.fillPath(tile, glow)
 
+
+def draw_logo(painter: QPainter, detailed: bool) -> None:
+    """The two cards, the bridge arc and the spark, in 256-unit design space."""
     left_center, left_angle = QPointF(76, 166), -9
     right_center, right_angle = QPointF(180, 166), 9
     draw_card(painter, left_center, left_angle, "NL", "brug", detailed)
@@ -95,8 +99,41 @@ def render(size: int) -> QImage:
     painter.drawEllipse(apex, 30, 30)
     painter.setBrush(QColor(255, 236, 179))
     painter.drawEllipse(apex, 9 if detailed else 14, 9 if detailed else 14)
+
+
+def render(size: int) -> QImage:
+    image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+    painter = new_painter(image, size / 256)
+    draw_background(painter, 56)
+    draw_logo(painter, size >= 128)
     painter.end()
     return image
+
+
+def write_android_icons(res_dir: str) -> None:
+    """
+    Adaptive launcher icon for the Android app: a full-bleed background layer and the logo as foreground.
+    Layers are 108 dp; launchers mask them to ~66 dp (a circle on Pixel phones), so the logo sits in the
+    middle 64 dp (256 of the 432 px at xxxhdpi).
+    """
+    for density, size in (("mdpi", 108), ("hdpi", 162), ("xhdpi", 216), ("xxhdpi", 324), ("xxxhdpi", 432)):
+        folder = os.path.join(res_dir, f"mipmap-{density}")
+        os.makedirs(folder, exist_ok=True)
+        background = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+        painter = new_painter(background, size / 256)
+        draw_background(painter, 0)
+        painter.end()
+        background.save(os.path.join(folder, "ic_launcher_background.png"))
+        foreground = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+        painter = new_painter(foreground, size / 432)
+        painter.translate(88, 88)
+        draw_logo(painter, True)
+        painter.end()
+        foreground.save(os.path.join(folder, "ic_launcher_foreground.png"))
+    # the rounded tile as an in-app image (main menu)
+    folder = os.path.join(res_dir, "drawable-nodpi")
+    os.makedirs(folder, exist_ok=True)
+    render(384).save(os.path.join(folder, "taalbrug_logo.png"))
 
 
 def to_pil(image: QImage) -> Image.Image:
@@ -115,6 +152,10 @@ def main() -> None:
     # every size is drawn separately (small ones simplified) and bundled into one .ico
     images[256].save(os.path.join(out_dir, "taalbrug.ico"), sizes=[(s, s) for s in SIZES], append_images=[images[s] for s in SIZES[:-1]])
     print("written:", out_dir)
+    android_res = os.path.join(config.MAIN_PATH, "android", "app", "src", "main", "res")
+    if os.path.isdir(os.path.dirname(android_res)):
+        write_android_icons(android_res)
+        print("written:", android_res)
 
 
 if __name__ == "__main__":
