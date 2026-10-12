@@ -24,6 +24,7 @@ import com.taalbrug.app.ui.LightPalette
 import com.taalbrug.app.ui.MainMenuScreen
 import com.taalbrug.app.ui.ManageScreen
 import com.taalbrug.app.ui.ModeSelectScreen
+import com.taalbrug.app.ui.SplashOverlay
 import com.taalbrug.app.ui.StatisticsScreen
 import com.taalbrug.app.ui.TaalbrugTheme
 import com.taalbrug.app.ui.TrainingScreen
@@ -40,9 +41,12 @@ class MainActivity : ComponentActivity() {
             // the theme is stored in the settings table like on the desktop; without a choice, follow the phone
             val systemDark = isSystemInDarkTheme()
             var dark by remember { mutableStateOf(Store.loadSetting("theme")?.let { it == "dark" } ?: systemDark) }
-            LaunchedEffect(dark) {
+            // the startup animation plays once per launch (not again after rotating the phone)
+            var showSplash by rememberSaveable { mutableStateOf(true) }
+            LaunchedEffect(dark, showSplash) {
                 val transparent = AndroidColor.TRANSPARENT
-                val style = if (dark) SystemBarStyle.dark(transparent) else SystemBarStyle.light(transparent, transparent)
+                // the splash background is dark indigo, so it needs light status bar icons
+                val style = if (dark || showSplash) SystemBarStyle.dark(transparent) else SystemBarStyle.light(transparent, transparent)
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
             }
 
@@ -54,21 +58,25 @@ class MainActivity : ComponentActivity() {
 
             val palette = if (dark) DarkPalette else LightPalette
             TaalbrugTheme(palette) {
-                Box(Modifier.fillMaxSize().background(palette.bg).safeDrawingPadding()) {
-                    when {
-                        route == "menu" -> MainMenuScreen(
-                            dark = dark,
-                            onNavigate = { route = it },
-                            onToggleTheme = {
-                                dark = !dark
-                                Store.saveSetting("theme", if (dark) "dark" else "light")
-                            },
-                        )
-                        route == "modes" -> ModeSelectScreen(onStart = { route = "train/${it.code}" }, onBack = { route = "menu" })
-                        route.startsWith("train/") -> TrainingScreen(Mode.valueOf(route.removePrefix("train/")), onEnd = { route = "menu" })
-                        route == "stats" -> StatisticsScreen(onBack = { route = "menu" })
-                        route == "manage" -> ManageScreen(onBack = { route = "menu" })
+                Box(Modifier.fillMaxSize().background(palette.bg)) {
+                    Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                        when {
+                            route == "menu" -> MainMenuScreen(
+                                dark = dark,
+                                onNavigate = { route = it },
+                                onToggleTheme = {
+                                    dark = !dark
+                                    Store.saveSetting("theme", if (dark) "dark" else "light")
+                                },
+                            )
+                            route == "modes" -> ModeSelectScreen(onStart = { route = "train/${it.code}" }, onBack = { route = "menu" })
+                            route.startsWith("train/") -> TrainingScreen(Mode.valueOf(route.removePrefix("train/")), onEnd = { route = "menu" })
+                            route == "stats" -> StatisticsScreen(onBack = { route = "menu" })
+                            route == "manage" -> ManageScreen(onBack = { route = "menu" })
+                        }
                     }
+                    // drawn over the whole screen, including behind the status bar
+                    if (showSplash) SplashOverlay(onFinished = { showSplash = false })
                 }
             }
         }
